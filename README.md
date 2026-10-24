@@ -14,4 +14,4 @@ self-host 工具集合。工具设计为通用，但需求判断来自我个人�
 
 ## [drawsrv](drawsrv/README.md)
 
-轻量 Excalidraw 自托管。官方编辑器组件 + Go 静态服务，支持多画布、自动保存和 Git 历史；由反代提供 HTTPS 和认证，无需 Docker 或数据库。
+轻量 Excalidraw 自托管。侧重多画布和服务端保存。
