@@ -11,7 +11,7 @@ import {
   canvasURL,
   checked,
   loadCanvas,
-  version,
+  saveResult,
   type Canvas,
   type CanvasItem,
   type HistoryItem,
@@ -44,7 +44,7 @@ function Gallery() {
         <span className="muted">个人绘图空间</span>
       </header>
       <h1>我的画布</h1>
-      <p className="muted">自动保存到自己的服务器，每次保存都有 Git 历史。</p>
+      <p className="muted">自动同步到自己的服务器，空闲后保存历史。</p>
       <form
         className="create"
         onSubmit={async (event) => {
@@ -132,8 +132,10 @@ function Editor({
   const library = useRef(loaded.canvas.libraryItems);
   const [name, setName] = useState(loaded.canvas.name);
   const [status, setStatus] = useState<SaveState>({
-    phase: "saved",
-    message: "已保存 · Git 历史已记录",
+    phase: loaded.persisted ? "saved" : "synced",
+    message: loaded.persisted
+      ? "已落盘 · 历史已记录"
+      : "已同步到服务器 · 等待落盘",
   });
   const [history, setHistory] = useState<HistoryItem[] | null>(null);
   const [historyError, setHistoryError] = useState("");
@@ -152,9 +154,26 @@ function Editor({
               body,
             }),
           );
-          return { etag: version(response) };
+          return saveResult(response);
         },
         setStatus,
+        2000,
+        {
+          persisted: loaded.persisted,
+          publish: async (etag) =>
+            saveResult(
+              await checked(
+                await fetch(`${canvasURL(id)}/flush`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "If-Match": etag,
+                  },
+                  body: "{}",
+                }),
+              ),
+            ),
+        },
       ),
   );
 
@@ -202,22 +221,49 @@ function Editor({
     };
     const visibility = () => {
       if (doc.hidden) {
-        void save.flush();
+        void save.sync();
       }
     };
     const online = () => {
-      void save.flush();
+      void save.sync();
     };
+    let polling: AbortController | undefined;
+    const checkPersistence = async () => {
+      if (polling || !save.needsPersistence || save.dirty) {
+        return;
+      }
+      polling = new ownerWindow.AbortController();
+      try {
+        const response = await checked(
+          await fetch(`${canvasURL(id)}/status`, {
+            cache: "no-store",
+            signal: polling.signal,
+          }),
+        );
+        const result = saveResult(response);
+        save.observePersistence(result.etag, result.persisted);
+      } catch {
+        // Polling never discards the known upload or overwrites an upload error.
+      } finally {
+        polling = undefined;
+      }
+    };
+    const statusTimer = ownerWindow.setInterval(
+      () => void checkPersistence(),
+      2000,
+    );
     ownerWindow.addEventListener("beforeunload", beforeUnload);
     ownerWindow.addEventListener("online", online);
     doc.addEventListener("visibilitychange", visibility);
     return () => {
+      ownerWindow.clearInterval(statusTimer);
+      polling?.abort();
       ownerWindow.removeEventListener("beforeunload", beforeUnload);
       ownerWindow.removeEventListener("online", online);
       doc.removeEventListener("visibilitychange", visibility);
       save.dispose();
     };
-  }, [save]);
+  }, [save, id]);
   const exportBackup = () => {
     const doc = node.current!.ownerDocument;
     const ownerWindow = doc.defaultView!;
@@ -336,7 +382,7 @@ function Editor({
               <time>{new Date(item.date).toLocaleString()}</time>
               <code>{item.commit.slice(0, 8)}</code>
               {index === 0 ? (
-                <span className="muted">当前版本</span>
+                <span className="muted">最近落盘</span>
               ) : (
                 <button
                   disabled={restoring}
@@ -348,7 +394,7 @@ function Editor({
               {restoreTarget === item.commit && (
                 <div className="restore-confirm">
                   <p>
-                    将当前画布恢复到此版本？当前内容已保存，可从历史再次恢复。
+                    将当前画布恢复到此版本？恢复前会先保存当前内容，原有历史会保留。
                   </p>
                   <button
                     disabled={restoring}

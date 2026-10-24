@@ -236,3 +236,7 @@ time {
     top: 120px;
   }
 }
+
+.save-state.synced {
+  color: #8a661a;
+}

@@ -37,9 +37,16 @@ export function version(response: Response) {
   }
   return etag;
 }
+export function saveResult(response: Response) {
+  const value = response.headers.get("X-Drawsrv-Persisted");
+  if (value !== "true" && value !== "false") {
+    throw new SaveError("服务器未返回保存状态，请导出当前内容后刷新", true);
+  }
+  return { etag: version(response), persisted: value === "true" };
+}
 export async function loadCanvas(id: string) {
   const response = await checked(
     await fetch(canvasURL(id), { cache: "no-store" }),
   );
-  return { canvas: (await response.json()) as Canvas, etag: version(response) };
+  return { canvas: (await response.json()) as Canvas, ...saveResult(response) };
 }
