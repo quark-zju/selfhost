@@ -1,0 +1,24 @@
+[Unit]
+Description=Personal Excalidraw server
+After=network.target
+
+[Service]
+Type=simple
+User=drawsrv
+Group=drawsrv
+StateDirectory=drawsrv
+StateDirectoryMode=0700
+WorkingDirectory=/opt/drawsrv
+ExecStart=/opt/drawsrv/drawsrv -listen 127.0.0.1:8080 -static /opt/drawsrv/web -data /var/lib/drawsrv
+Environment=GOMEMLIMIT=64MiB
+UMask=0077
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

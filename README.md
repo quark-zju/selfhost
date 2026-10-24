@@ -12,3 +12,6 @@ self-host 工具集合。工具设计为通用，但需求判断来自我个人�
 
 对于 VPS 拦截 SMTP 的情况，可配合 purelymail 重定向使用。
 
+## [drawsrv](drawsrv/README.md)
+
+轻量 Excalidraw 自托管。官方编辑器组件 + Go 静态服务，支持多画布、自动保存和 Git 历史；由反代提供 HTTPS 和认证，无需 Docker 或数据库。

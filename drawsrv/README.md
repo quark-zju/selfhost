@@ -1,0 +1,89 @@
+# drawsrv
+
+个人使用的轻量 Excalidraw 自托管服务。官方 `@excalidraw/excalidraw` 组件保持原样，React wrapper 提供画布管理；Go 标准库服务提供静态文件、状态保存及 Git 历史。
+
+- 画布列表、名称搜索、新建、重命名。
+- 元素、图片、背景/网格设置、视图位置及每个画布的素材库一起保存。
+- 停止编辑 3 秒后保存，连续编辑最多等待 15 秒；也可以立即保存。
+- 每次内容有变化的成功保存自动 Git commit，未变化的内容不产生提交。
+- 最近 100 次历史可在网页中列出和恢复；恢复创建新提交，保留后续历史。全部历史可用 Git 查看。
+- ETag 条件写入：多个标签页或设备冲突时停止上传，不静默覆盖；可导出当前内容后刷新。
+- 默认 `127.0.0.1:8080`，由现有反代负责公网 HTTPS 和认证。无 Docker、数据库或 Node.js 常驻进程。
+
+## 本地构建与运行
+
+构建需要 Go 1.24+、Git、Node.js 22.18+（或 24+）、npm。VPS 运行时只需要编译后的 Go 程序、前端静态文件和系统 Git。
+
+```sh
+cd drawsrv
+make build
+./bin/drawsrv -static ./web/dist -data ./data -listen 127.0.0.1:8080
+```
+
+浏览器打开 `http://127.0.0.1:8080`。首次运行会在空数据目录中创建独立 Git 仓库，使用本地提交身份 `drawsrv <drawsrv@localhost>`，无需配置全局 Git 用户，也不会推送到远程。
+
+开发时先构建一次静态页面并启动 Go，再在另一终端运行 `npm --prefix web run dev`；Vite 将 `/api` 转发到 Go 服务。
+
+```sh
+make test
+```
+
+## 部署到 Linux VPS
+
+在本地或 CI 构建，避免在小内存 VPS 安装前端依赖或执行打包：
+
+```sh
+npm --prefix web ci
+npm --prefix web run build
+mkdir -p bin
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o bin/drawsrv .
+```
+
+ARM64 VPS 使用 `GOARCH=arm64`。将 `bin/drawsrv` 和整个 `web/dist/` 上传到 VPS，例如 `/opt/drawsrv/drawsrv` 和 `/opt/drawsrv/web/`。前端包含本地字体，不依赖默认字体 CDN。
+
+```sh
+/opt/drawsrv/drawsrv \
+  -listen 127.0.0.1:8080 \
+  -static /opt/drawsrv/web \
+  -data /var/lib/drawsrv
+```
+
+参见 [systemd 示例](deploy/drawsrv.service)。先创建 `drawsrv` 系统用户，再安装服务文件；示例使用 `StateDirectory=drawsrv` 创建数据目录。程序文件和静态文件应由部署用户管理，对服务用户只读。
+
+反代将整个站点（包括 `/api/`）转发到 `http://127.0.0.1:8080` 并启用身份认证。保留原始 `Host`，不要缓存 API、移除 `ETag`/`If-Match` 或转换 API JSON 响应。将反代请求体上限设置为至少 16 MiB；根路径部署，不支持 URL 子路径。服务本身不区分用户，所有获准访问者都能读写所有画布。
+
+## 数据、内存与历史
+
+```text
+data/
+├── .git/                 # 独立的运行数据历史
+├── <canvas-id>.json      # 名称、元素、设置、图片和素材库
+└── ...
+```
+
+数据目录必须在静态目录之外；不要让反代直接公开数据目录，也不要将其放进代码仓库。首次初始化要求空目录。每个数据目录只允许一个服务进程，进程锁会在退出或崩溃后自动释放。
+
+Go 不会常驻缓存所有画布。列表只读取名称和文件时间，状态读写与 Git 提交串行执行，以限制同时存在的大对象。默认单画布最多 16 MiB（包含 base64 图片及 JSON 格式化开销），可用 `-max-canvas-mib` 调整。内存峰值仍随单画布大小增大，不能将 Go 的空闲内存占用视为大图保存时的上限。
+
+systemd 示例的 `GOMEMLIMIT=64MiB` 是 Go 运行时的软目标，并非服务或 Git 子进程的硬上限。运行时自动 Git GC 已关闭，避免保存时触发高开销打包。含图片的频繁保存会增加磁盘占用；可在服务停止时按需运行：
+
+```sh
+git -C /var/lib/drawsrv -c pack.threads=1 -c pack.windowMemory=8m gc
+```
+
+备份整个数据目录（含 `.git`）。为获得一致备份，先停止服务或使用文件系统快照。Git 历史不替代异机备份。
+
+写入采用临时文件、`fsync` 和原子替换，再提交 Git；Git 失败会尝试回滚。若进程在替换文件后、提交前中断，下次启动会校验状态文件并补记恢复提交。状态文件写入或回滚失败时服务拒绝继续读写，需检查磁盘/Git 状态并重启。不要在服务运行时手动编辑状态文件、执行 Git 写操作或维护仓库。
+
+网页展示最近 100 次提交；更早的历史仍保留在 Git：
+
+```sh
+git -C /var/lib/drawsrv log --oneline -- <canvas-id>.json
+git -C /var/lib/drawsrv show <commit>:<canvas-id>.json
+```
+
+## 当前边界
+
+这是个人文档保存工具，不提供实时协作、多用户隔离或在线账号管理。没有 service worker，也不依赖原官网的 Firebase、分享或协作后端。素材库按画布保存。
+
+浏览器在网络失败时保留当前编辑并显示错误，可重试或导出备份；离开页面时会尝试提示未保存内容。不会将正在编辑的内容另存为持久化的浏览器离线草稿。首次从原 Excalidraw 迁移时，导出 `.excalidraw` 文件，在新建画布中使用编辑器的打开功能导入；素材库可单独从文件导入。
