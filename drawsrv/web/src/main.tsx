@@ -196,7 +196,7 @@ function Editor({
           return { ...state, applied: result.applied, dropped: result.dropped };
         },
         logSaveState,
-        2000,
+        0,
         {
           persisted: loaded.persisted,
           revision: loaded.revision,

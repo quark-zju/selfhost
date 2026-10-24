@@ -26,7 +26,7 @@ export class SaveError extends Error {
 }
 type Mode = "auto" | "sync" | "persist";
 
-// Coalesce uploads every two seconds, including during continuous editing.
+// Coalesce same-turn edits and edits during a request, without a fixed wait.
 // Uploads and explicit disk flushes share one queue and one version sequence.
 export class Autosave {
   private pending: string | null = null;
@@ -60,7 +60,7 @@ export class Autosave {
     etag: string,
     send: (body: string, etag: string, baseline: string) => Promise<SaveResult>,
     notify: (state: SaveState) => void,
-    delay = 2000,
+    delay = 0,
     disk?: {
       persisted: boolean;
       revision?: string;

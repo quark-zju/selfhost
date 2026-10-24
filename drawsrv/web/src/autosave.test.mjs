@@ -157,6 +157,7 @@ test("uploads coalesced changes every two seconds during continuous editing", as
       return { etag: "v1", revision: "v1", persisted: true };
     },
     () => {},
+    2000,
   );
   t.after(() => save.dispose());
   save.queue("one");
@@ -208,6 +209,7 @@ test("edits during an automatic save get their own two-second upload window", as
       };
     },
     () => {},
+    2000,
   );
   t.after(() => save.dispose());
   save.queue("one");
@@ -506,4 +508,38 @@ test("a one-shot event during completion updates durability after the request se
   assert.equal(save.needsPersistence, false);
   assert.equal(state.phase, "saved");
   save.dispose();
+});
+
+test("default upload has no fixed delay and coalesces edits while a request is in flight", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const first = deferred(),
+    calls = [];
+  const save = new Autosave(
+    "initial",
+    "v0",
+    async (body) => {
+      calls.push(body);
+      if (calls.length === 1) await first.promise;
+      return {
+        etag: `v${calls.length}`,
+        revision: `v${calls.length}`,
+        persisted: true,
+      };
+    },
+    () => {},
+  );
+  t.after(() => save.dispose());
+  save.queue("one");
+  save.queue("two");
+  assert.deepEqual(calls, []);
+  t.mock.timers.tick(0);
+  assert.deepEqual(calls, ["two"]);
+  save.queue("three");
+  save.queue("four");
+  t.mock.timers.tick(0);
+  assert.deepEqual(calls, ["two"]);
+  first.resolve();
+  await new Promise(setImmediate);
+  assert.deepEqual(calls, ["two", "four"]);
+  assert.equal(save.dirty, false);
 });
