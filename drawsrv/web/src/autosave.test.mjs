@@ -20,7 +20,11 @@ test("serializes in-flight edits and uses the returned version", async () => {
       if (calls.length === 1) {
         await first.promise;
       }
-      return { etag: `v${calls.length}`, persisted: true };
+      return {
+        etag: `v${calls.length}`,
+        revision: `v${calls.length}`,
+        persisted: true,
+      };
     },
     () => {},
   );
@@ -47,7 +51,7 @@ test("retains latest local changes on failure, supports explicit retry", async (
         failed = true;
         throw new Error("offline");
       }
-      return { etag: "v1", persisted: true };
+      return { etag: "v1", revision: "v1", persisted: true };
     },
     () => {},
   );
@@ -92,7 +96,11 @@ test("reverting to the initial content during an in-flight write still persists"
       if (calls.length === 1) {
         await first.promise;
       }
-      return { etag: `v${calls.length}`, persisted: true };
+      return {
+        etag: `v${calls.length}`,
+        revision: `v${calls.length}`,
+        persisted: true,
+      };
     },
     () => {},
   );
@@ -146,7 +154,7 @@ test("uploads coalesced changes every two seconds during continuous editing", as
     "v0",
     async (body) => {
       calls.push(body);
-      return { etag: "v1", persisted: true };
+      return { etag: "v1", revision: "v1", persisted: true };
     },
     () => {},
   );
@@ -169,7 +177,7 @@ test("unchanged notifications do not restart the idle countdown", (t) => {
     "v0",
     async (body) => {
       calls.push(body);
-      return { etag: "v1", persisted: true };
+      return { etag: "v1", revision: "v1", persisted: true };
     },
     () => {},
   );
@@ -193,7 +201,11 @@ test("edits during an automatic save get their own two-second upload window", as
       if (calls.length === 1) {
         await first.promise;
       }
-      return { etag: `v${calls.length}`, persisted: true };
+      return {
+        etag: `v${calls.length}`,
+        revision: `v${calls.length}`,
+        persisted: true,
+      };
     },
     () => {},
   );
@@ -227,7 +239,11 @@ test("manual flush still saves edits queued during an automatic request", async 
       if (calls.length === 1) {
         await first.promise;
       }
-      return { etag: `v${calls.length}`, persisted: true };
+      return {
+        etag: `v${calls.length}`,
+        revision: `v${calls.length}`,
+        persisted: true,
+      };
     },
     () => {},
   );
@@ -250,7 +266,7 @@ test("sync acknowledges memory while explicit flush waits for durable storage", 
     "v0",
     async (body, etag) => {
       events.push(["upload", body, etag]);
-      return { etag: "v1", persisted: false };
+      return { etag: "v1", revision: "v1", persisted: false };
     },
     (value) => {
       state = value;
@@ -260,7 +276,7 @@ test("sync acknowledges memory while explicit flush waits for durable storage", 
       persisted: true,
       publish: async (etag) => {
         events.push(["persist", etag]);
-        return { etag, persisted: true };
+        return { etag, revision: etag, persisted: true };
       },
     },
   );
@@ -285,7 +301,7 @@ test("failed disk flush retries persistence without uploading acknowledged data 
     "v0",
     async () => {
       uploads++;
-      return { etag: "v1", persisted: false };
+      return { etag: "v1", revision: "v1", persisted: false };
     },
     () => {},
     2000,
@@ -296,7 +312,7 @@ test("failed disk flush retries persistence without uploading acknowledged data 
         if (publishes === 1) {
           throw Error("disk full");
         }
-        return { etag, persisted: true };
+        return { etag, revision: etag, persisted: true };
       },
     },
   );
@@ -310,12 +326,12 @@ test("failed disk flush retries persistence without uploading acknowledged data 
   save.dispose();
 });
 
-test("status polling only marks the matching acknowledged version durable", async () => {
+test("status events only mark the matching acknowledged version durable", async () => {
   let state;
   const save = new Autosave(
     "initial",
     "v0",
-    async () => ({ etag: "v1", persisted: false }),
+    async () => ({ etag: "v1", revision: "v1", persisted: false }),
     (value) => {
       state = value;
     },
@@ -340,7 +356,7 @@ test("manual disk flush serializes edits arriving while a commit is in flight", 
     async (body, etag) => {
       events.push(["upload", body, etag]);
       counter++;
-      return { etag: `v${counter}`, persisted: false };
+      return { etag: `v${counter}`, revision: `v${counter}`, persisted: false };
     },
     () => {},
     2000,
@@ -351,7 +367,7 @@ test("manual disk flush serializes edits arriving while a commit is in flight", 
         if (etag === "v1") {
           await disk.promise;
         }
-        return { etag, persisted: true };
+        return { etag, revision: etag, persisted: true };
       },
     },
   );
@@ -384,7 +400,11 @@ test("a stale timer after a manual save cannot disable future uploads", async (t
       if (calls.length === 1) {
         await first.promise;
       }
-      return { etag: `v${calls.length}`, persisted: true };
+      return {
+        etag: `v${calls.length}`,
+        revision: `v${calls.length}`,
+        persisted: true,
+      };
     },
     () => {},
   );
@@ -410,7 +430,11 @@ test("manual flush includes edits queued by its completion notification", async 
     "v0",
     async (body) => {
       calls.push(body);
-      return { etag: `v${calls.length}`, persisted: true };
+      return {
+        etag: `v${calls.length}`,
+        revision: `v${calls.length}`,
+        persisted: true,
+      };
     },
     (state) => {
       if (state.phase === "saved" && !queued) {
@@ -423,5 +447,63 @@ test("manual flush includes edits queued by its completion notification", async 
   assert.equal(await save.flush(), true);
   assert.deepEqual(calls, ["one", "completion edit"]);
   assert.equal(save.dirty, false);
+  save.dispose();
+});
+
+test("a durability event arriving before the upload ACK is not lost", async () => {
+  const ack = deferred();
+  let state;
+  const save = new Autosave(
+    "initial",
+    "v0",
+    async () => ack.promise,
+    (value) => {
+      state = value;
+    },
+  );
+  save.queue("edit");
+  const synced = save.sync();
+  save.observePersistence("v1", true, "revision-1");
+  ack.resolve({ etag: "v1", revision: "revision-1", persisted: false });
+  assert.equal(await synced, true);
+  assert.equal(save.needsPersistence, false);
+  assert.equal(state.phase, "saved");
+  save.dispose();
+});
+
+test("an old event for the same payload cannot confirm a new revision", async () => {
+  const save = new Autosave(
+    "body B",
+    "etag-B",
+    async () => ({ etag: "etag-A", revision: "new-A", persisted: false }),
+    () => {},
+  );
+  save.observePersistence("etag-A", true, "old-A");
+  save.queue("body A");
+  assert.equal(await save.sync(), true);
+  assert.equal(save.needsPersistence, true);
+  save.observePersistence("etag-A", true, "new-A");
+  assert.equal(save.needsPersistence, false);
+  save.dispose();
+});
+
+test("a one-shot event during completion updates durability after the request settles", async () => {
+  let save;
+  let state;
+  save = new Autosave(
+    "initial",
+    "v0",
+    async () => ({ etag: "v1", revision: "revision-1", persisted: false }),
+    (value) => {
+      state = value;
+      if (value.phase === "synced") {
+        save.observePersistence("v1", true, "revision-1");
+      }
+    },
+  );
+  save.queue("edit");
+  await save.sync();
+  assert.equal(save.needsPersistence, false);
+  assert.equal(state.phase, "saved");
   save.dispose();
 });

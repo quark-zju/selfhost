@@ -42,7 +42,11 @@ export function saveResult(response: Response) {
   if (value !== "true" && value !== "false") {
     throw new SaveError("服务器未返回保存状态，请导出当前内容后刷新", true);
   }
-  return { etag: version(response), persisted: value === "true" };
+  const revision = response.headers.get("X-Drawsrv-Revision");
+  if (!revision) {
+    throw new SaveError("服务器未返回修订标识，请导出当前内容后刷新", true);
+  }
+  return { etag: version(response), persisted: value === "true", revision };
 }
 export async function loadCanvas(id: string) {
   const response = await checked(

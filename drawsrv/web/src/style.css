@@ -218,3 +218,15 @@ time {
     top: 120px;
   }
 }
+
+.remote-update {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f4f1ff;
+  border-bottom: 1px solid #e5e3ef;
+  font-size: 14px;
+}

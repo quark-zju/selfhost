@@ -122,9 +122,11 @@ function Gallery() {
 function Editor({
   id,
   loaded,
+  clientId,
 }: {
   id: string;
   loaded: Awaited<ReturnType<typeof loadCanvas>>;
+  clientId: string;
 }) {
   const node = useRef<HTMLDivElement>(null);
   const api = useRef<ExcalidrawImperativeAPI | null>(null);
@@ -139,6 +141,7 @@ function Editor({
       lastSaveMessage.current = entry;
     }
   };
+  const [remoteUpdate, setRemoteUpdate] = useState(false);
   const [history, setHistory] = useState<HistoryItem[] | null>(null);
   const [historyError, setHistoryError] = useState("");
   const [restoring, setRestoring] = useState(false);
@@ -152,16 +155,22 @@ function Editor({
           const response = await checked(
             await fetch(canvasURL(id), {
               method: "PUT",
-              headers: { "Content-Type": "application/json", "If-Match": etag },
+              headers: {
+                "Content-Type": "application/json",
+                "If-Match": etag,
+                "X-Drawsrv-Client": clientId,
+              },
               body,
             }),
           );
+          setRemoteUpdate(false);
           return saveResult(response);
         },
         logSaveState,
         2000,
         {
           persisted: loaded.persisted,
+          revision: loaded.revision,
           publish: async (etag) =>
             saveResult(
               await checked(
@@ -170,6 +179,7 @@ function Editor({
                   headers: {
                     "Content-Type": "application/json",
                     "If-Match": etag,
+                    "X-Drawsrv-Client": clientId,
                   },
                   body: "{}",
                 }),
@@ -237,43 +247,68 @@ function Editor({
     const online = () => {
       void save.sync();
     };
-    let polling: AbortController | undefined;
-    const checkPersistence = async () => {
-      if (polling || !save.needsPersistence || save.dirty) {
+    const events = new ownerWindow.EventSource(`${canvasURL(id)}/events`);
+    let active = true;
+    let disconnected = false;
+    const receive = (event: Event) => {
+      if (!active) {
         return;
       }
-      polling = new ownerWindow.AbortController();
       try {
-        const response = await checked(
-          await fetch(`${canvasURL(id)}/status`, {
-            cache: "no-store",
-            signal: polling.signal,
-          }),
-        );
-        const result = saveResult(response);
-        save.observePersistence(result.etag, result.persisted);
+        const data = JSON.parse((event as MessageEvent<string>).data);
+        if (
+          typeof data.etag !== "string" ||
+          typeof data.revision !== "string" ||
+          typeof data.persisted !== "boolean" ||
+          typeof data.source !== "string"
+        ) {
+          return;
+        }
+        save.observePersistence(data.etag, data.persisted, data.revision);
+        if (data.source === clientId) {
+          setRemoteUpdate(false);
+        } else if (data.revision !== save.revision) {
+          console.log(
+            "[drawsrv:remote] 其他客户端已更新此画布，可重新加载查看",
+          );
+          setRemoteUpdate(true);
+        }
       } catch {
-        // Polling never discards the known upload or overwrites an upload error.
-      } finally {
-        polling = undefined;
+        console.log("[drawsrv:events] 忽略无效的状态通知");
       }
     };
-    const statusTimer = ownerWindow.setInterval(
-      () => void checkPersistence(),
-      2000,
-    );
+    for (const kind of ["state", "change", "persisted"]) {
+      events.addEventListener(kind, receive);
+    }
+    events.onopen = () => {
+      if (!active) {
+        return;
+      }
+      console.log(
+        disconnected
+          ? "[drawsrv:events] 通知连接已恢复"
+          : "[drawsrv:events] 通知连接已建立",
+      );
+      disconnected = false;
+    };
+    events.onerror = () => {
+      if (active && !disconnected) {
+        console.log("[drawsrv:events] 通知连接中断，正在重连");
+      }
+      disconnected = true;
+    };
     ownerWindow.addEventListener("beforeunload", beforeUnload);
     ownerWindow.addEventListener("online", online);
     doc.addEventListener("visibilitychange", visibility);
     return () => {
-      ownerWindow.clearInterval(statusTimer);
-      polling?.abort();
+      active = false;
+      events.close();
       ownerWindow.removeEventListener("beforeunload", beforeUnload);
       ownerWindow.removeEventListener("online", online);
       doc.removeEventListener("visibilitychange", visibility);
       save.dispose();
     };
-  }, [save, id]);
+  }, [save, id, clientId]);
   const exportBackup = () => {
     const doc = node.current!.ownerDocument;
     const ownerWindow = doc.defaultView!;
@@ -342,6 +377,18 @@ function Editor({
         <button onClick={exportBackup}>导出备份</button>
         <button onClick={() => void showHistory()}>历史</button>
       </header>
+      {remoteUpdate && (
+        <div className="remote-update" role="status">
+          <span>其他客户端已更新此画布，重新加载可查看最新内容。</span>
+          <button
+            onClick={() =>
+              node.current!.ownerDocument.defaultView?.location.reload()
+            }
+          >
+            重新加载
+          </button>
+        </div>
+      )}
       {historyError && (
         <p className="error" role="alert">
           {historyError}
@@ -417,6 +464,7 @@ function Editor({
                             headers: {
                               "Content-Type": "application/json",
                               "If-Match": save.version,
+                              "X-Drawsrv-Client": clientId,
                             },
                             body: JSON.stringify({ commit: item.commit }),
                           }),
@@ -443,6 +491,14 @@ function Editor({
 }
 
 function App({ root }: { root: HTMLElement }) {
+  const [clientId] = useState(() =>
+    Array.from(
+      root.ownerDocument.defaultView!.crypto.getRandomValues(
+        new Uint8Array(16),
+      ),
+      (byte) => byte.toString(16).padStart(2, "0"),
+    ).join(""),
+  );
   const id = new URL(
     root.ownerDocument.defaultView!.location.href,
   ).searchParams.get("canvas");
@@ -486,7 +542,7 @@ function App({ root }: { root: HTMLElement }) {
     );
   }
   return loaded ? (
-    <Editor id={id} loaded={loaded} />
+    <Editor id={id} loaded={loaded} clientId={clientId} />
   ) : (
     <main className="gallery">正在加载画布…</main>
   );

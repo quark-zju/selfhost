@@ -9,7 +9,7 @@ export type SaveState = {
     | "conflict";
   message: string;
 };
-export type SaveResult = { etag: string; persisted: boolean };
+export type SaveResult = { etag: string; persisted: boolean; revision: string };
 export class SaveError extends Error {
   blocked: boolean;
   constructor(message: string, blocked = false) {
@@ -27,6 +27,8 @@ export class Autosave {
   private saved: string;
   private etag: string;
   private persisted: boolean;
+  private revisionID: string;
+  private observedDurable: string | null = null;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private ready = false;
   private running: Promise<boolean> | null = null;
@@ -44,6 +46,7 @@ export class Autosave {
     delay = 2000,
     disk?: {
       persisted: boolean;
+      revision?: string;
       publish: (etag: string) => Promise<SaveResult>;
     },
   ) {
@@ -53,10 +56,14 @@ export class Autosave {
     this.notify = notify;
     this.delay = delay;
     this.persisted = disk?.persisted ?? true;
+    this.revisionID = disk?.revision ?? etag;
     this.publish = disk?.publish;
   }
   get version() {
     return this.etag;
+  }
+  get revision() {
+    return this.revisionID;
   }
   get dirty() {
     return this.pending !== null || this.inFlight !== null;
@@ -65,10 +72,14 @@ export class Autosave {
     return !this.persisted;
   }
 
-  observePersistence(etag: string, persisted: boolean) {
+  observePersistence(etag: string, persisted: boolean, revision = etag) {
+    if (persisted) {
+      this.observedDurable = revision;
+    }
     // A delayed status response must not label a newer local upload as durable.
     if (
       etag !== this.etag ||
+      revision !== this.revisionID ||
       this.running ||
       this.dirty ||
       this.blocked ||
@@ -120,6 +131,16 @@ export class Autosave {
       });
     }
     const result = await this.running;
+    // A one-shot SSE event may have arrived while the HTTP ACK was in flight.
+    if (
+      this.observedDurable === this.revisionID &&
+      !this.persisted &&
+      !this.dirty &&
+      !this.blocked
+    ) {
+      this.persisted = true;
+      this.report();
+    }
     return result &&
       ((this.pending !== null && (force || this.ready)) ||
         (mode === "persist" && !this.persisted))
@@ -142,8 +163,10 @@ export class Autosave {
         try {
           const result = await this.send(body, this.etag);
           this.etag = result.etag;
+          this.revisionID = result.revision;
           this.saved = body;
-          this.persisted = result.persisted;
+          this.persisted =
+            result.persisted || this.observedDurable === result.revision;
         } catch (error) {
           this.pending ??= body;
           this.failure(error);
@@ -163,6 +186,7 @@ export class Autosave {
             throw new SaveError("服务器尚未确认落盘，请重试");
           }
           this.etag = result.etag;
+          this.revisionID = result.revision;
           this.persisted = true;
         } catch (error) {
           // The upload was acknowledged. Retry disk flush, not the same upload.
