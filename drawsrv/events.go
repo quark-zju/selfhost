@@ -18,6 +18,7 @@ const eventHeartbeat = 15 * time.Second
 
 type canvasEvent struct {
 	ETag      string `json:"etag"`
+	Hash      string `json:"hash"`
 	Revision  string `json:"revision"`
 	Persisted bool   `json:"persisted"`
 	Source    string `json:"source"`
@@ -44,27 +45,31 @@ func newEventBroker() (*eventBroker, error) {
 	}
 	return &eventBroker{epoch: hex.EncodeToString(epoch), latest: map[string]canvasEvent{}, subscribers: map[string]map[chan eventFrame]struct{}{}}, nil
 }
-func (b *eventBroker) stateLocked(id, etag string, persisted bool) canvasEvent {
+func (b *eventBroker) stateLocked(id, etag string, persisted bool, hash ...string) canvasEvent {
 	state, ok := b.latest[id]
 	if !ok || state.ETag != etag {
 		b.sequence++
 		state = canvasEvent{ETag: etag, Revision: fmt.Sprintf("%s-%d", b.epoch, b.sequence), Persisted: persisted}
 		b.latest[id] = state
 	}
+	if len(hash) > 0 {
+		state.Hash = hash[0]
+		b.latest[id] = state
+	}
 	return state
 }
-func (b *eventBroker) snapshot(id, etag string, persisted bool) canvasEvent {
+func (b *eventBroker) snapshot(id, etag string, persisted bool, hash ...string) canvasEvent {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.stateLocked(id, etag, persisted)
+	return b.stateLocked(id, etag, persisted, hash...)
 }
-func (b *eventBroker) publish(id, kind, etag string, persisted bool, source string) {
+func (b *eventBroker) publish(id, kind, etag string, persisted bool, source string, hash ...string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed {
 		return
 	}
-	state := b.stateLocked(id, etag, persisted)
+	state := b.stateLocked(id, etag, persisted, hash...)
 	// A real content change gets a new identity even after reverting to an older
 	// payload. This keeps delayed durability events from confirming a new draft.
 	if kind == "change" {
@@ -134,17 +139,23 @@ func (b *eventBroker) close() {
 // Called under store.mu: register and enqueue the initial state atomically with
 // respect to writes, then release it for the lifetime of the HTTP connection.
 func (s *store) currentEvent(id string, body []byte) canvasEvent {
-	return s.events.snapshot(id, revision(body), s.pending[id] == nil)
+	state := s.events.snapshot(id, revision(body), s.pending[id] == nil)
+	if state.Hash == "" {
+		state = s.events.snapshot(id, revision(body), s.pending[id] == nil, contentHash(body))
+	}
+	return state
 }
 func (s *store) notifyChange(id string, body []byte, persisted bool, source string) {
-	s.events.publish(id, "change", revision(body), persisted, source)
+	hash := contentHash(body)
+	s.events.publish(id, "change", revision(body), persisted, source, hash)
 	if persisted {
-		s.events.publish(id, "persisted", revision(body), true, source)
+		s.events.publish(id, "persisted", revision(body), true, source, hash)
 	}
 }
 func (s *store) setStateHeaders(w http.ResponseWriter, id string, body []byte) {
 	state := s.currentEvent(id, body)
 	w.Header().Set("ETag", state.ETag)
+	w.Header().Set("X-Drawsrv-Hash", state.Hash)
 	w.Header().Set("X-Drawsrv-Revision", state.Revision)
 	w.Header().Set("X-Drawsrv-Persisted", fmt.Sprint(state.Persisted))
 }

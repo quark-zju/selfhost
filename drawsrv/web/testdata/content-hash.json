@@ -1,0 +1,61 @@
+[
+  {
+    "document": {
+      "name": "画布 <>&   😀",
+      "elements": [
+        {
+          "id": "shape",
+          "boundElements": null,
+          "updated": 1,
+          "version": 5,
+          "versionNonce": 9,
+          "x": 1e-7,
+          "y": 1e+21,
+          "customData": {
+            "😀": [
+              0,
+              0.000001,
+              true,
+              null
+            ],
+            "": "accenté"
+          }
+        }
+      ],
+      "files": {
+        "image": {
+          "id": "image",
+          "dataURL": "data:image/png;base64,aGVsbG8=",
+          "created": 1,
+          "lastRetrieved": 100
+        }
+      },
+      "libraryItems": [
+        {
+          "id": "library",
+          "created": 22,
+          "status": "published",
+          "elements": [
+            {
+              "id": "text",
+              "updated": 4,
+              "version": 2,
+              "versionNonce": 7,
+              "text": "test"
+            }
+          ]
+        }
+      ]
+    },
+    "hash": "50452713feabef15e52a000ba4c5fc807f538cdaf92485194be4e4815d79e8a7"
+  },
+  {
+    "document": {
+      "name": "empty",
+      "elements": [],
+      "files": {},
+      "libraryItems": []
+    },
+    "hash": "fc0843977f0c4b920f116eec07a494ae3c7eb99aacf7eae29b944d0dadffd915"
+  }
+]
