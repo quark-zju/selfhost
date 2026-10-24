@@ -53,7 +53,7 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 		id = parts[1]
 		if len(parts) == 3 {
 			action = parts[2]
-			if action != "history" && action != "restore" && action != "flush" && action != "status" && action != "events" {
+			if action != "history" && action != "restore" && action != "flush" && action != "status" && action != "events" && action != "changes" {
 				http.NotFound(w, r)
 				return
 			}
@@ -64,7 +64,7 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 		allowed = "GET, POST"
 	} else if action == "history" || action == "status" || action == "events" {
 		allowed = "GET"
-	} else if action == "restore" || action == "flush" {
+	} else if action == "restore" || action == "flush" || action == "changes" {
 		allowed = "POST"
 	}
 	if !strings.Contains(", "+allowed+",", ", "+r.Method+",") {
@@ -136,6 +136,10 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 		w.Write(current)
 		return
 	}
+	if action == "changes" {
+		s.serveChanges(w, r, id, current, source)
+		return
+	}
 	if r.Header.Get("If-Match") != revision(current) {
 		http.Error(w, "canvas changed; export your changes then reload", 412)
 		return
@@ -186,6 +190,23 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, _ = json.MarshalIndent(state, "", "  ")
+	previous, previousErr := documentJSON(current)
+	next, nextErr := documentJSON(body)
+	if previousErr != nil || nextErr != nil {
+		http.Error(w, "cannot decode canvas", 400)
+		return
+	}
+	stampElements(previous["elements"].([]any), next["elements"].([]any), time.Now().UnixMilli())
+	encoded, _ := json.Marshal(next)
+	state, err = decodeSnapshot(encoded)
+	if err != nil {
+		http.Error(w, "cannot decode canvas", 400)
+		return
+	}
+	body, _ = json.MarshalIndent(state, "", "  ")
+	if contentHash(body) == contentHash(current) {
+		body = current
+	}
 	// Enforce a consistent limit on the canonical on-disk format too.
 	if int64(len(body)) > s.limit {
 		http.Error(w, "formatted canvas exceeds size limit", 413)
