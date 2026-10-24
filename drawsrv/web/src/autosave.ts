@@ -19,7 +19,7 @@ export class Autosave {
   private saved: string;
   private etag: string;
   private timer: ReturnType<typeof setTimeout> | undefined;
-  private started = 0;
+  private ready = false;
   private running: Promise<boolean> | null = null;
   private blocked = false;
   private send: (body: string, etag: string) => Promise<Result>;
@@ -31,7 +31,7 @@ export class Autosave {
     etag: string,
     send: (body: string, etag: string) => Promise<Result>,
     notify: (state: SaveState) => void,
-    delay = 3000,
+    delay = 30000,
   ) {
     this.saved = saved;
     this.etag = etag;
@@ -54,34 +54,40 @@ export class Autosave {
       return;
     }
     this.pending = body;
-    if (!this.started) {
-      this.started = Date.now();
-    }
+    this.ready = false;
     this.notify({ phase: "pending", message: "等待保存…" });
     clearTimeout(this.timer);
-    this.timer = setTimeout(
-      () => void this.flush(),
-      Math.max(0, Math.min(this.delay, 15000 - (Date.now() - this.started))),
-    );
+    this.timer = setTimeout(() => {
+      this.ready = true;
+      void this.run(false);
+    }, this.delay);
   }
   async flush(): Promise<boolean> {
-    clearTimeout(this.timer);
+    return this.run(true);
+  }
+  private async run(force: boolean): Promise<boolean> {
+    if (force) {
+      clearTimeout(this.timer);
+    }
     if (this.running) {
-      return this.running;
+      const result = await this.running;
+      return result && this.pending !== null && (force || this.ready)
+        ? this.run(force)
+        : result;
     }
     if (this.blocked) {
       return false;
     }
-    this.started = 0;
-    this.running = this.drain().finally(() => {
+    this.running = this.drain(force).finally(() => {
       this.running = null;
     });
     return this.running;
   }
-  private async drain(): Promise<boolean> {
-    while (this.pending !== null) {
+  private async drain(force: boolean): Promise<boolean> {
+    while (this.pending !== null && (force || this.ready)) {
       const body = this.pending;
       this.pending = null;
+      this.ready = false;
       if (body === this.saved) {
         continue;
       }
@@ -103,7 +109,11 @@ export class Autosave {
         this.inFlight = null;
       }
     }
-    this.notify({ phase: "saved", message: "已保存 · Git 历史已记录" });
+    this.notify(
+      this.pending !== null
+        ? { phase: "pending", message: "等待保存…" }
+        : { phase: "saved", message: "已保存 · Git 历史已记录" },
+    );
     return true;
   }
   // Unmount should only happen after a successful flush or explicit navigation.

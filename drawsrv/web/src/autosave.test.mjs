@@ -137,3 +137,107 @@ test("a render triggered by an idle flush does not schedule another save", async
   assert.equal(save.dirty, false);
   save.dispose();
 });
+
+test("autosave waits for 30 seconds without edits and restarts after each change", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const calls = [];
+  const save = new Autosave(
+    "initial",
+    "v0",
+    async (body) => {
+      calls.push(body);
+      return { etag: "v1" };
+    },
+    () => {},
+  );
+  t.after(() => save.dispose());
+  save.queue("one");
+  t.mock.timers.tick(29999);
+  assert.deepEqual(calls, []);
+  save.queue("two");
+  t.mock.timers.tick(29999);
+  assert.deepEqual(calls, []);
+  t.mock.timers.tick(1);
+  assert.deepEqual(calls, ["two"]);
+});
+
+test("unchanged notifications do not restart the idle countdown", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const calls = [];
+  const save = new Autosave(
+    "initial",
+    "v0",
+    async (body) => {
+      calls.push(body);
+      return { etag: "v1" };
+    },
+    () => {},
+  );
+  t.after(() => save.dispose());
+  save.queue("edit");
+  t.mock.timers.tick(20000);
+  save.queue("edit");
+  t.mock.timers.tick(10000);
+  assert.deepEqual(calls, ["edit"]);
+});
+
+test("edits during an automatic save get their own 30-second idle period", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const first = deferred();
+  const calls = [];
+  const save = new Autosave(
+    "initial",
+    "v0",
+    async (body) => {
+      calls.push(body);
+      if (calls.length === 1) {
+        await first.promise;
+      }
+      return { etag: `v${calls.length}` };
+    },
+    () => {},
+  );
+  t.after(() => save.dispose());
+  save.queue("one");
+  t.mock.timers.tick(30000);
+  assert.deepEqual(calls, ["one"]);
+  save.queue("two");
+  first.resolve();
+  // Drain the promise callbacks without forcing a manual save.
+  for (let i = 0; i < 8; i++) {
+    await Promise.resolve();
+  }
+  assert.deepEqual(calls, ["one"]);
+  assert.equal(save.dirty, true);
+  t.mock.timers.tick(29999);
+  assert.deepEqual(calls, ["one"]);
+  t.mock.timers.tick(1);
+  assert.deepEqual(calls, ["one", "two"]);
+});
+
+test("manual flush still saves edits queued during an automatic request", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const first = deferred();
+  const calls = [];
+  const save = new Autosave(
+    "initial",
+    "v0",
+    async (body) => {
+      calls.push(body);
+      if (calls.length === 1) {
+        await first.promise;
+      }
+      return { etag: `v${calls.length}` };
+    },
+    () => {},
+  );
+  t.after(() => save.dispose());
+  save.queue("one");
+  t.mock.timers.tick(30000);
+  save.queue("two");
+  const flushed = save.flush();
+  first.resolve();
+  assert.equal(await flushed, true);
+  assert.deepEqual(calls, ["one", "two"]);
+  assert.equal(save.dirty, false);
+});
