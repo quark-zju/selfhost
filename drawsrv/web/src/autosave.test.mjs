@@ -118,3 +118,22 @@ test("unchanged content does not generate a request", async () => {
   assert.equal(save.dirty, false);
   save.dispose();
 });
+
+test("a render triggered by an idle flush does not schedule another save", async () => {
+  let save;
+  save = new Autosave(
+    "initial",
+    "v0",
+    async () => {
+      throw Error("must not send");
+    },
+    (state) => {
+      if (state.phase === "saved") {
+        queueMicrotask(() => save.queue("initial"));
+      }
+    },
+  );
+  assert.equal(await save.flush(), true);
+  assert.equal(save.dirty, false);
+  save.dispose();
+});

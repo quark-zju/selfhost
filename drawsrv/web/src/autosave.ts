@@ -15,6 +15,7 @@ export class SaveError extends Error {
 // conditional write blocks the queue instead of overwriting a newer remote edit.
 export class Autosave {
   private pending: string | null = null;
+  private inFlight: string | null = null;
   private saved: string;
   private etag: string;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -42,13 +43,13 @@ export class Autosave {
     return this.etag;
   }
   get dirty() {
-    return this.pending !== null || this.running !== null;
+    return this.pending !== null || this.inFlight !== null;
   }
   queue(body: string) {
     if (
       this.blocked ||
       body === this.pending ||
-      (!this.running && body === this.saved && this.pending === null)
+      (!this.inFlight && body === this.saved && this.pending === null)
     ) {
       return;
     }
@@ -85,6 +86,7 @@ export class Autosave {
         continue;
       }
       this.notify({ phase: "saving", message: "正在保存并记录历史…" });
+      this.inFlight = body;
       try {
         const result = await this.send(body, this.etag);
         this.etag = result.etag;
@@ -97,6 +99,8 @@ export class Autosave {
           message: error instanceof Error ? error.message : "保存失败，请重试",
         });
         return false;
+      } finally {
+        this.inFlight = null;
       }
     }
     this.notify({ phase: "saved", message: "已保存 · Git 历史已记录" });
