@@ -18,12 +18,13 @@ type pendingCanvas struct {
 	name       string
 	updated    time.Time
 	retryAfter time.Time
+	source     string
 }
 
 // Pending snapshots are acknowledged data, not an evictable read cache. The
 // caller holds store.mu. Memory pressure persists older entries before admitting
 // another update; a failed flush never silently drops acknowledged content.
-func (s *store) stage(id string, body, current []byte, name string, now time.Time) (bool, error) {
+func (s *store) stage(id string, body, current []byte, name string, now time.Time, source string) (bool, error) {
 	if bytes.Equal(body, current) {
 		return s.pending[id] == nil, nil
 	}
@@ -32,6 +33,7 @@ func (s *store) stage(id string, body, current []byte, name string, now time.Tim
 			return false, err
 		}
 		s.removePending(id)
+		s.notifyChange(id, body, true, source)
 		return true, nil
 	}
 	oldBytes := 0
@@ -57,12 +59,13 @@ func (s *store) stage(id string, body, current []byte, name string, now time.Tim
 	// Own an exact-sized buffer rather than retaining spare HTTP/JSON capacity.
 	owned := make([]byte, len(body))
 	copy(owned, body)
-	s.pending[id] = &pendingCanvas{body: owned, name: name, updated: now}
+	s.pending[id] = &pendingCanvas{body: owned, name: name, updated: now, source: source}
 	s.pendingBytes += len(body) - oldBytes
 	select {
 	case s.pendingRequests <- struct{}{}:
 	default:
 	}
+	s.notifyChange(id, body, false, source)
 	return false, nil
 }
 
@@ -91,6 +94,7 @@ func (s *store) flushPending(id string) error {
 		return err
 	}
 	s.removePending(id)
+	s.events.publish(id, "persisted", revision(entry.body), true, entry.source)
 	return nil
 }
 func (s *store) flushAll() error {

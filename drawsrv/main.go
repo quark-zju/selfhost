@@ -116,6 +116,7 @@ func run() (result error) {
 	}
 	// Cancel and reap GC before shutdown waits on requests queued behind its lock.
 	stop()
+	s.events.close()
 	<-done
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

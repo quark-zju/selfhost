@@ -59,6 +59,7 @@ type store struct {
 	pendingBudget       int
 	commitDelay         time.Duration
 	pendingRequests     chan struct{}
+	events              *eventBroker
 }
 
 var canvasID = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -113,6 +114,9 @@ func (s *store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
+	if s.events != nil {
+		s.events.close()
+	}
 	if s.lock == nil {
 		return nil
 	}
@@ -148,6 +152,10 @@ func openStore(dir string, limit int64) (result *store, err error) {
 		}
 	}
 	s := &store{dir: dir, limit: limit, cache: newBlobCache(defaultCacheBytes), maintenanceRequests: make(chan time.Time, 1), pending: make(map[string]*pendingCanvas), pendingBudget: defaultPendingBytes, commitDelay: defaultCommitDelay, pendingRequests: make(chan struct{}, 1)}
+	s.events, err = newEventBroker()
+	if err != nil {
+		return nil, err
+	}
 	s.lock, err = os.OpenFile(filepath.Join(dir, "drawsrv.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err

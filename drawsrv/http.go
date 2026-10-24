@@ -5,16 +5,18 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 )
+
+var clientIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
 
 func newHandler(s *store, static fs.FS) http.Handler {
 	mux := http.NewServeMux()
@@ -51,7 +53,7 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 		id = parts[1]
 		if len(parts) == 3 {
 			action = parts[2]
-			if action != "history" && action != "restore" && action != "flush" && action != "status" {
+			if action != "history" && action != "restore" && action != "flush" && action != "status" && action != "events" {
 				http.NotFound(w, r)
 				return
 			}
@@ -60,7 +62,7 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 	allowed := "GET, PUT"
 	if collection {
 		allowed = "GET, POST"
-	} else if action == "history" || action == "status" {
+	} else if action == "history" || action == "status" || action == "events" {
 		allowed = "GET"
 	} else if action == "restore" || action == "flush" {
 		allowed = "POST"
@@ -68,6 +70,15 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 	if !strings.Contains(", "+allowed+",", ", "+r.Method+",") {
 		w.Header().Set("Allow", allowed)
 		http.Error(w, "method not allowed", 405)
+		return
+	}
+	source := r.Header.Get("X-Drawsrv-Client")
+	if source != "" && !clientIDPattern.MatchString(source) {
+		http.Error(w, "invalid client identifier", 400)
+		return
+	}
+	if action == "events" {
+		s.serveEvents(w, r, id)
 		return
 	}
 	if r.Method != "GET" {
@@ -116,8 +127,7 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot read canvas", 500)
 		return
 	}
-	w.Header().Set("ETag", revision(current))
-	w.Header().Set("X-Drawsrv-Persisted", fmt.Sprint(s.pending[id] == nil))
+	s.setStateHeaders(w, id, current)
 	if action == "status" {
 		json.NewEncoder(w).Encode(map[string]bool{"persisted": s.pending[id] == nil})
 		return
@@ -189,15 +199,17 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		persisted = true
 	} else {
-		persisted, err = s.stage(id, body, current, state.Name, time.Now())
+		persisted, err = s.stage(id, body, current, state.Name, time.Now(), source)
 	}
 	if err != nil {
 		log.Print(err)
 		http.Error(w, "cannot save canvas", 500)
 		return
 	}
-	w.Header().Set("ETag", revision(body))
-	w.Header().Set("X-Drawsrv-Persisted", fmt.Sprint(persisted))
+	if action == "restore" {
+		s.notifyChange(id, body, true, source)
+	}
+	s.setStateHeaders(w, id, body)
 	if persisted {
 		w.WriteHeader(http.StatusNoContent)
 	} else {

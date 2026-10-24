@@ -243,7 +243,7 @@ func TestPendingEntryCountIsBounded(t *testing.T) {
 		json.Unmarshal([]byte(body), &state)
 		state.Name = "updated"
 		changed, _ := json.MarshalIndent(state, "", "  ")
-		if _, err := s.stage(id, changed, []byte(body), state.Name, time.Now()); err != nil {
+		if _, err := s.stage(id, changed, []byte(body), state.Name, time.Now(), ""); err != nil {
 			t.Fatal(err)
 		}
 		if len(s.pending) > maxPendingCanvases {
