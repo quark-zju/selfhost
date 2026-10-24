@@ -1,0 +1,6 @@
+/picomxd
+/.gocache/
+/internal/config/custom_local.go
+/messages/
+.notmuch/
+.notmuch-config

@@ -1,0 +1,51 @@
+[Unit]
+Description=picomx SMTP archive and POP3S access
+After=network-online.target
+Wants=network-online.target
+Requires=picomx.socket
+
+[Service]
+Type=simple
+User=picomx
+Group=picomx
+ExecStart=/usr/local/bin/picomxd
+EnvironmentFile=/etc/picomx/picomx.env
+Restart=on-failure
+RestartSec=2
+StateDirectory=picomx
+StateDirectoryMode=0700
+UMask=0077
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateIPC=yes
+PrivateUsers=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=-/etc/picosrv/certs
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+# picomx is receive-only: it accepts the activated socket but never connects out.
+SystemCallFilter=~connect
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
