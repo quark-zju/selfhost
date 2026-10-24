@@ -41,15 +41,19 @@ type storeState struct {
 	Canvases map[string]canvasMetadata `json:"canvases"`
 }
 type store struct {
-	mu     sync.Mutex
-	dir    string
-	limit  int64
-	failed bool
-	lock   *os.File
-	head   string
-	ref    string
-	state  storeState
-	cache  *blobCache
+	mu                  sync.Mutex
+	dir                 string
+	limit               int64
+	failed              bool
+	closed              bool
+	lock                *os.File
+	head                string
+	ref                 string
+	state               storeState
+	cache               *blobCache
+	dirtySince          time.Time
+	retryAfter          time.Time
+	maintenanceRequests chan time.Time
 }
 
 var canvasID = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -67,7 +71,11 @@ func revision(data []byte) string {
 // before publishing a ref. Plumbing commands never use an index or working tree.
 // Processes are short lived here, keeping idle memory small for personal use.
 func (s *store) gitInput(input io.Reader, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	return s.runGit(context.Background(), 20*time.Second, input, args...)
+}
+
+func (s *store) runGit(parent context.Context, timeout time.Duration, input io.Reader, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	options := []string{"--git-dir=" + s.dir,
 		"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
@@ -97,6 +105,9 @@ func (s *store) gitInput(input io.Reader, args ...string) ([]byte, error) {
 }
 func (s *store) git(args ...string) ([]byte, error) { return s.gitInput(nil, args...) }
 func (s *store) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
 	if s.lock == nil {
 		return nil
 	}
@@ -130,7 +141,7 @@ func openStore(dir string, limit int64) (result *store, err error) {
 			}
 		}
 	}
-	s := &store{dir: dir, limit: limit, cache: newBlobCache(defaultCacheBytes)}
+	s := &store{dir: dir, limit: limit, cache: newBlobCache(defaultCacheBytes), maintenanceRequests: make(chan time.Time, 1)}
 	s.lock, err = os.OpenFile(filepath.Join(dir, "drawsrv.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
@@ -195,6 +206,8 @@ func openStore(dir string, limit int64) (result *store, err error) {
 			return nil, err
 		}
 	}
+	// Reconsider maintenance after restart, including writes from a prior run.
+	s.markDirty()
 	return s, nil
 }
 
@@ -325,6 +338,7 @@ func (s *store) writeBlob(body []byte) (string, error) {
 	if !commitID.MatchString(oid) {
 		return "", errors.New("invalid Git blob ID")
 	}
+	s.markDirty()
 	return oid, nil
 }
 

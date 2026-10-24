@@ -84,7 +84,11 @@ Go 保留画布列表的轻量元数据，并使用按 Git blob ID 索引的 LRU
 
 HEAD 指向的提交是唯一权威状态。发布前中断只会留下未引用对象；发布后重启直接读取提交中的索引，无需扫描画布、补记提交或回滚文件。ref 发布失败或结果不确定时服务停止读写，请排除磁盘或锁文件问题后重启。已有 Git 数据但 HEAD/ref 丢失时拒绝自动初始化，需要先修复引用。不要在服务运行时执行外部 Git 写操作或维护仓库。
 
-systemd 示例的 `GOMEMLIMIT=64MiB` 是 Go 运行时的软目标，并非服务或 Git 子进程的硬上限。运行时自动 Git GC 已关闭，避免保存时触发高开销打包。含图片的频繁保存会增加磁盘占用；可在服务停止时按需运行：
+systemd 示例的 `GOMEMLIMIT=64MiB` 是 Go 运行时的软目标，并非服务或 Git 子进程的硬上限。Git 隐式自动维护仍保持关闭，daemon 会协调自己的 maintenance：首次 Git 写入后标记 dirty，默认 10 分钟后执行一次前台 `git gc --prune=never`，后续写入不推迟这个时间。维护成功后清除 dirty，没有写入时不会反复 GC；启动时也会安排一次，以覆盖上次进程退出前的写入。可用 `-maintenance-delay=30m` 调整，`-maintenance-delay=0` 禁用。
+
+维护和 API 读写共用互斥锁，不会同时操作仓库。请求正忙时延后 1 分钟，维护失败保留 dirty 并在 5 分钟后重试；维护期间 API 请求可能等待。Git packing 使用单线程，window 和 delta cache 各限制为 8 MiB，单次维护最多 5 分钟；这些设置不是整个 Git 进程的硬内存上限。SIGTERM/中断会取消并回收维护子进程，再关闭服务和仓库锁。
+
+GC 保留所有历史，不负责限制历史的磁盘总量。含图片的频繁保存仍会增加磁盘占用；也可在服务停止时按需运行：
 
 ```sh
 git --git-dir=/var/lib/drawsrv -c pack.threads=1 -c pack.windowMemory=8m gc --prune=never

@@ -86,8 +86,8 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 	// and ensure Git sees exactly one writer. Server ReadTimeout bounds slow peers.
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.failed {
-		http.Error(w, "storage needs restart after uncertain Git publication", 503)
+	if s.failed || s.closed {
+		http.Error(w, "storage unavailable; restart required", 503)
 		return
 	}
 	if collection {
