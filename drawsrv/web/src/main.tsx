@@ -18,6 +18,7 @@ import {
 } from "./api";
 import "@excalidraw/excalidraw/index.css";
 import "./style.css";
+import { LocalAppStateStore } from "./localAppState";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : "请求失败";
@@ -123,11 +124,18 @@ function Editor({
   id,
   loaded,
   clientId,
+  ownerWindow,
 }: {
   id: string;
   loaded: Awaited<ReturnType<typeof loadCanvas>>;
   clientId: string;
+  ownerWindow: Window;
 }) {
+  const [localState] = useState(() => new LocalAppStateStore(id, ownerWindow));
+  const [initialScene] = useState(() => ({
+    ...loaded.canvas,
+    appState: localState.load(),
+  }));
   const node = useRef<HTMLDivElement>(null);
   const api = useRef<ExcalidrawImperativeAPI | null>(null);
   const current = useRef<Canvas>(loaded.canvas);
@@ -206,15 +214,15 @@ function Editor({
     current.current = {
       name: current.current.name,
       elements: data.elements,
-      appState: {
-        ...data.appState,
-        scrollX: appState.scrollX,
-        scrollY: appState.scrollY,
-        zoom: appState.zoom,
-      },
       files: data.files || {},
       libraryItems: library.current,
     };
+    localState.save({
+      ...data.appState,
+      scrollX: appState.scrollX,
+      scrollY: appState.scrollY,
+      zoom: appState.zoom,
+    });
     queue();
   };
   const onLibraryChange = (items: LibraryItems) => {
@@ -234,6 +242,7 @@ function Editor({
       });
     }
     const beforeUnload = (event: BeforeUnloadEvent) => {
+      localState.flush();
       if (save.dirty) {
         event.preventDefault();
         event.returnValue = "";
@@ -241,6 +250,7 @@ function Editor({
     };
     const visibility = () => {
       if (doc.hidden) {
+        localState.flush();
         void save.sync();
       }
     };
@@ -307,8 +317,9 @@ function Editor({
       ownerWindow.removeEventListener("online", online);
       doc.removeEventListener("visibilitychange", visibility);
       save.dispose();
+      localState.dispose();
     };
-  }, [save, id, clientId]);
+  }, [save, id, clientId, localState]);
   const exportBackup = () => {
     const doc = node.current!.ownerDocument;
     const ownerWindow = doc.defaultView!;
@@ -396,7 +407,7 @@ function Editor({
       )}
       <div className="drawing" inert={restoring}>
         <Excalidraw
-          initialData={loaded.canvas}
+          initialData={initialScene}
           excalidrawAPI={(instance) => {
             api.current = instance;
           }}
@@ -542,7 +553,12 @@ function App({ root }: { root: HTMLElement }) {
     );
   }
   return loaded ? (
-    <Editor id={id} loaded={loaded} clientId={clientId} />
+    <Editor
+      id={id}
+      loaded={loaded}
+      clientId={clientId}
+      ownerWindow={root.ownerDocument.defaultView!}
+    />
   ) : (
     <main className="gallery">正在加载画布…</main>
   );

@@ -4,7 +4,6 @@ import { SaveError } from "./autosave";
 export type Canvas = {
   name: string;
   elements: NonNullable<ExcalidrawInitialDataState["elements"]>;
-  appState: NonNullable<ExcalidrawInitialDataState["appState"]>;
   files: NonNullable<ExcalidrawInitialDataState["files"]>;
   libraryItems: NonNullable<ExcalidrawInitialDataState["libraryItems"]>;
 };
@@ -52,5 +51,11 @@ export async function loadCanvas(id: string) {
   const response = await checked(
     await fetch(canvasURL(id), { cache: "no-store" }),
   );
-  return { canvas: (await response.json()) as Canvas, ...saveResult(response) };
+  const { name, elements, files, libraryItems } =
+    (await response.json()) as Canvas;
+  // Explicitly exclude appState from older servers or historical snapshots.
+  return {
+    canvas: { name, elements, files, libraryItems },
+    ...saveResult(response),
+  };
 }
