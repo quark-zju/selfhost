@@ -40,12 +40,7 @@ function Gallery() {
   useEffect(load, []);
   return (
     <main className="gallery">
-      <header>
-        <span className="brand">drawsrv</span>
-        <span className="muted">个人绘图空间</span>
-      </header>
       <h1>我的画布</h1>
-      <p className="muted">自动同步到自己的服务器，空闲后保存历史。</p>
       <form
         className="create"
         onSubmit={async (event) => {
@@ -141,6 +136,9 @@ function Editor({
   const current = useRef<Canvas>(loaded.canvas);
   const library = useRef(loaded.canvas.libraryItems);
   const [name, setName] = useState(loaded.canvas.name);
+  useEffect(() => {
+    ownerWindow.document.title = `${name.trim() || current.current.name} | drawsrv`;
+  }, [name, ownerWindow]);
   const lastSaveMessage = useRef<string | null>(null);
   const logSaveState = (state: SaveState) => {
     const entry = `[drawsrv:${state.phase}] ${state.message}`;
