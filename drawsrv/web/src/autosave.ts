@@ -17,6 +17,10 @@ export type SaveResult = {
   applied?: number[];
   dropped?: { index: number; reason: string }[];
 };
+export type RemoteSnapshot = SaveResult & {
+  body: string;
+  apply: () => void | Promise<void>;
+};
 export class SaveError extends Error {
   blocked: boolean;
   constructor(message: string, blocked = false) {
@@ -46,11 +50,14 @@ export class Autosave {
     baseline: string,
   ) => Promise<SaveResult>;
   private hashBody?: (body: string) => Promise<string>;
-  private refresh?: () => void;
+  private loadSnapshot?: () => Promise<RemoteSnapshot>;
+  private canRefresh?: () => boolean;
+  private refreshDeferred = false;
+  private editSequence = 0;
+  private disposed = false;
   private log: (decision: string, details?: unknown) => void = () => {};
   private remote: SaveResult | null = null;
   private remoteDirty = false;
-  private reloading = false;
   private publish?: (etag: string) => Promise<SaveResult>;
   private notify: (state: SaveState) => void;
   private delay: number;
@@ -66,7 +73,8 @@ export class Autosave {
       revision?: string;
       hash?: string;
       hashBody?: (body: string) => Promise<string>;
-      refresh?: () => void;
+      loadSnapshot?: () => Promise<RemoteSnapshot>;
+      canRefresh?: () => boolean;
       log?: (decision: string, details?: unknown) => void;
       publish: (etag: string) => Promise<SaveResult>;
     },
@@ -80,7 +88,8 @@ export class Autosave {
     this.revisionID = disk?.revision ?? etag;
     this.publish = disk?.publish;
     this.hashBody = disk?.hashBody;
-    this.refresh = disk?.refresh;
+    this.loadSnapshot = disk?.loadSnapshot;
+    this.canRefresh = disk?.canRefresh;
     this.log = disk?.log ?? (() => {});
     if (disk?.hash)
       this.remote = {
@@ -125,7 +134,7 @@ export class Autosave {
       localDirty: this.dirty,
       blocked: this.blocked,
     });
-    if (this.blocked || this.reloading) {
+    if (this.blocked || this.disposed) {
       this.log("保留本地冲突副本，忽略自动刷新");
       return;
     }
@@ -136,38 +145,106 @@ export class Autosave {
     this.log(this.dirty ? "本地有修改，先尝试保存" : "本地无修改，比较 HASH");
     await this.run("sync");
   }
+  async resumeRemote() {
+    if (
+      this.disposed ||
+      this.blocked ||
+      this.running ||
+      this.dirty ||
+      !this.remoteDirty ||
+      (this.canRefresh && !this.canRefresh())
+    )
+      return;
+    this.refreshDeferred = false;
+    await this.run("sync");
+  }
   private async reconcile() {
     if (
       !this.hashBody ||
-      !this.refresh ||
+      !this.loadSnapshot ||
       !this.remoteDirty ||
       this.blocked ||
-      this.reloading
+      this.disposed
     )
       return;
-    while (this.remote && !this.dirty) {
+    while (this.remote && !this.dirty && !this.disposed) {
+      if (this.canRefresh && !this.canRefresh()) {
+        this.refreshDeferred = true;
+        this.log("正在操作编辑器，延后原地更新");
+        return;
+      }
       const remote = this.remote,
-        baseline = this.saved;
+        baseline = this.saved,
+        sequence = this.editSequence;
       const localHash = await this.hashBody(baseline);
-      if (this.dirty || this.blocked) {
-        this.log("比较期间有新修改，延后刷新");
+      if (
+        this.dirty ||
+        this.blocked ||
+        this.disposed ||
+        sequence !== this.editSequence
+      ) {
+        this.log("比较期间有新修改，延后更新");
         return;
       }
       if (remote !== this.remote || baseline !== this.saved) continue;
-      this.remoteDirty = false;
       const compatible = localHash === remote.hash;
       this.log("HASH 比较", { localHash, serverHash: remote.hash, compatible });
       if (compatible) {
         this.etag = remote.etag;
         this.revisionID = remote.revision;
         this.persisted = remote.persisted;
+        this.remoteDirty = false;
+        this.refreshDeferred = false;
         this.log("有效内容一致，继续编辑");
-      } else {
-        this.reloading = true;
-        this.log("本地无待保存修改，刷新到服务端状态");
-        this.refresh();
+        return;
       }
-      return;
+      this.log("本地无待保存修改，拉取最新快照以原地更新");
+      const snapshot = await this.loadSnapshot();
+      const fetchedHash = await this.hashBody(snapshot.body);
+      if (
+        this.dirty ||
+        this.blocked ||
+        this.disposed ||
+        sequence !== this.editSequence
+      ) {
+        this.log("拉取期间有新修改或已退出，丢弃快照");
+        return;
+      }
+      if (fetchedHash !== snapshot.hash)
+        throw new SaveError(
+          "服务端快照 HASH 不匹配，请导出备份后手动刷新。",
+          true,
+        );
+      const latest = this.remote!;
+      const [epoch, revision] = snapshot.revision.split("-");
+      const [latestEpoch, latestRevision] = latest.revision.split("-");
+      if (
+        (epoch === latestEpoch && Number(revision) < Number(latestRevision)) ||
+        (latest !== remote && epoch !== latestEpoch)
+      ) {
+        this.log("快照落后于 SSE，重新拉取");
+        continue;
+      }
+      if (this.canRefresh && !this.canRefresh()) {
+        this.refreshDeferred = true;
+        this.log("拉取期间开始编辑，延后原地更新");
+        return;
+      }
+      // apply() synchronously locks editor input before any asynchronous library
+      // work, and suppresses remote callbacks until the component has committed.
+      await snapshot.apply();
+      if (this.disposed) return;
+      this.saved = snapshot.body;
+      this.etag = snapshot.etag;
+      this.revisionID = snapshot.revision;
+      this.persisted =
+        snapshot.persisted || this.observedDurable === snapshot.revision;
+      this.recordRemote(snapshot, true);
+      this.refreshDeferred = false;
+      this.log("快照已原地应用并更新保存基准", {
+        hash: snapshot.hash,
+        revision: snapshot.revision,
+      });
     }
   }
   observePersistence(etag: string, persisted: boolean, revision = etag) {
@@ -189,13 +266,23 @@ export class Autosave {
     this.report();
   }
   queue(body: string) {
+    if (this.disposed) return;
+    // A failed remote adoption can block before there is a pending upload.
+    // Keep subsequent local edits dirty so leaving still requires a warning.
+    if (this.blocked) {
+      if (body !== this.saved || this.pending !== null) {
+        this.editSequence++;
+        this.pending = body;
+      }
+      return;
+    }
     if (
-      this.blocked ||
       body === this.pending ||
       (!this.inFlight && body === this.saved && this.pending === null)
     ) {
       return;
     }
+    this.editSequence++;
     this.pending = body;
     this.notify({ phase: "pending", message: "等待同步…" });
     // Do not restart this timer on every edit: continuous drawing must upload.
@@ -221,12 +308,12 @@ export class Autosave {
       this.timer = undefined;
     }
     if (!this.running) {
-      if (this.blocked) {
+      if (this.blocked || this.disposed) {
         return false;
       }
       this.running = this.drain(mode)
         .catch((error) => {
-          this.failure(error);
+          if (!this.disposed) this.failure(error);
           return false;
         })
         .finally(() => {
@@ -237,11 +324,12 @@ export class Autosave {
     if (
       result &&
       this.hashBody &&
-      this.refresh &&
+      this.loadSnapshot &&
       this.remoteDirty &&
       !this.dirty &&
       !this.blocked &&
-      !this.reloading
+      !this.refreshDeferred &&
+      !this.disposed
     )
       return this.run("sync");
     // A one-shot SSE event may have arrived while the HTTP ACK was in flight.
@@ -306,7 +394,7 @@ export class Autosave {
         }
       }
       await this.reconcile();
-      if (this.reloading) return false;
+      if (this.disposed) return false;
       if (mode === "persist" && !this.persisted) {
         this.notify({ phase: "persisting", message: "正在落盘并记录历史…" });
         try {
@@ -334,7 +422,7 @@ export class Autosave {
       this.timer = undefined;
     }
     await this.reconcile();
-    if (this.reloading) return false;
+    if (this.disposed) return false;
     this.report();
     return true;
   }
@@ -355,6 +443,7 @@ export class Autosave {
     );
   }
   dispose() {
+    this.disposed = true;
     clearTimeout(this.timer);
   }
 }

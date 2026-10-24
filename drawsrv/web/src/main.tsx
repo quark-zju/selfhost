@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Excalidraw, MainMenu, serializeAsJSON } from "@excalidraw/excalidraw";
+import { flushSync } from "react-dom";
+import {
+  Excalidraw,
+  MainMenu,
+  serializeAsJSON,
+  restoreElements,
+  CaptureUpdateAction,
+} from "@excalidraw/excalidraw";
 import type {
   ExcalidrawImperativeAPI,
   ExcalidrawProps,
@@ -20,6 +27,7 @@ import "./style.css";
 import { LocalAppStateStore } from "./localAppState";
 import { normalizeElements, normalizeLibraryItems } from "./normalize";
 import { serializeCanvas, diffCanvas, effectiveHash } from "./content";
+import { reuseRemoteElements, hasChangedExistingFiles } from "./remoteScene";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : "请求失败";
@@ -128,12 +136,17 @@ function Editor({
   ownerWindow: Window;
 }) {
   const [localState] = useState(() => new LocalAppStateStore(id, ownerWindow));
-  const [initialScene] = useState(() => ({
-    ...loaded.canvas,
-    appState: localState.load(),
+  const [scene, setScene] = useState(() => ({
+    key: 0,
+    initialData: { ...loaded.canvas, appState: localState.load() },
   }));
   const node = useRef<HTMLDivElement>(null);
   const api = useRef<ExcalidrawImperativeAPI | null>(null);
+  const applyingRemote = useRef(false);
+  const editingName = useRef(false);
+  const sceneReady = useRef<{ resolve: () => void; cancel: () => void } | null>(
+    null,
+  );
   const current = useRef<Canvas>(loaded.canvas);
   const library = useRef(loaded.canvas.libraryItems);
   const [name, setName] = useState(loaded.canvas.name);
@@ -204,9 +217,178 @@ function Editor({
           hashBody: (body) => effectiveHash(body, ownerWindow.crypto),
           log: (decision, details) =>
             console.log(`[drawsrv:sync] ${decision}`, details ?? ""),
-          refresh: () => {
-            localState.flush();
-            ownerWindow.location.reload();
+          canRefresh: () => {
+            const state = api.current?.getAppState();
+            return (
+              !!state &&
+              !state.isLoading &&
+              !applyingRemote.current &&
+              !editingName.current &&
+              state.cursorButton !== "down" &&
+              !state.editingTextElement &&
+              !state.editingLinearElement &&
+              !state.isResizing &&
+              !state.isRotating
+            );
+          },
+          loadSnapshot: async () => {
+            const next = await loadCanvas(id);
+            return {
+              ...next,
+              body: serializeCanvas(next.canvas),
+              apply: async () => {
+                const container = node.current,
+                  instance = api.current;
+                if (!container || !instance) throw Error("编辑器尚未就绪");
+                // The controller rechecks pending edits before entering this
+                // mutation phase. Lock input while asynchronous library work
+                // runs, and suppress only this phase's component callbacks.
+                const wasInert = container.inert;
+                applyingRemote.current = true;
+                container.inert = true;
+                try {
+                  const view = instance.getAppState();
+                  const live = new Set(
+                    next.canvas.elements
+                      .filter((element) => !element.isDeleted)
+                      .map((element) => element.id),
+                  );
+                  const groups = new Set(
+                    next.canvas.elements
+                      .filter((element) => !element.isDeleted)
+                      .flatMap((element) => element.groupIds),
+                  );
+                  const selection = {
+                    selectedElementIds: Object.fromEntries(
+                      Object.entries(view.selectedElementIds).filter(([id]) =>
+                        live.has(id),
+                      ),
+                    ),
+                    selectedGroupIds: Object.fromEntries(
+                      Object.entries(view.selectedGroupIds).filter(([id]) =>
+                        groups.has(id),
+                      ),
+                    ),
+                    selectedLinearElement:
+                      view.selectedLinearElement &&
+                      live.has(view.selectedLinearElement.elementId)
+                        ? view.selectedLinearElement
+                        : null,
+                  };
+                  if (
+                    hasChangedExistingFiles(
+                      instance.getFiles(),
+                      next.canvas.files,
+                    )
+                  ) {
+                    console.log(
+                      "[drawsrv:sync] 同 ID 图片内容改变，仅重建编辑器图片缓存；保留视图，清空组件撤销栈",
+                    );
+                    current.current = next.canvas;
+                    library.current = next.canvas.libraryItems;
+                    const ready = new Promise<void>((resolve, reject) => {
+                      const finish = () => {
+                        ownerWindow.clearTimeout(timer);
+                        sceneReady.current = null;
+                        resolve();
+                      };
+                      const timer = ownerWindow.setTimeout(() => {
+                        sceneReady.current = null;
+                        reject(Error("编辑器重新初始化超时"));
+                      }, 10000);
+                      sceneReady.current = {
+                        resolve: finish,
+                        cancel: () => {
+                          ownerWindow.clearTimeout(timer);
+                          sceneReady.current = null;
+                          reject(Error("编辑器已关闭"));
+                        },
+                      };
+                    });
+                    flushSync(() => {
+                      api.current = null;
+                      setScene((previous) => ({
+                        key: previous.key + 1,
+                        initialData: {
+                          ...next.canvas,
+                          appState: {
+                            ...view,
+                            ...selection,
+                            selectedLinearElement: null,
+                          },
+                        },
+                      }));
+                      setName(next.canvas.name);
+                    });
+                    await ready;
+                  } else {
+                    const libraryBody = (items: LibraryItems) =>
+                      serializeCanvas({
+                        name: "",
+                        elements: [],
+                        files: {},
+                        libraryItems: items,
+                      });
+                    if (
+                      libraryBody(library.current) !==
+                      libraryBody(next.canvas.libraryItems)
+                    ) {
+                      await instance.updateLibrary({
+                        libraryItems: next.canvas.libraryItems,
+                        merge: false,
+                        prompt: false,
+                        openLibraryMenu: false,
+                      });
+                    }
+                    const elements = reuseRemoteElements(
+                      instance.getSceneElementsIncludingDeleted(),
+                      restoreElements(next.canvas.elements, null, {
+                        repairBindings: true,
+                      }),
+                    );
+                    if (selection.selectedLinearElement) {
+                      const selected = instance
+                        .getSceneElementsIncludingDeleted()
+                        .find(
+                          (element) =>
+                            element.id ===
+                            selection.selectedLinearElement!.elementId,
+                        );
+                      if (!selected || !elements.includes(selected))
+                        selection.selectedLinearElement = null;
+                    }
+                    current.current = next.canvas;
+                    library.current = next.canvas.libraryItems;
+                    flushSync(() => {
+                      const files = instance.getFiles();
+                      instance.addFiles(
+                        Object.values(next.canvas.files).filter(
+                          (file) => !Object.hasOwn(files, file.id),
+                        ),
+                      );
+                      instance.updateScene({
+                        elements,
+                        appState: selection,
+                        captureUpdate: CaptureUpdateAction.NEVER,
+                      });
+                      setName(next.canvas.name);
+                    });
+                  }
+                } catch (error) {
+                  console.log(
+                    "[drawsrv:sync] 原地更新失败，保留页面供备份",
+                    error,
+                  );
+                  throw new SaveError(
+                    "无法原地更新画布，请导出备份后手动刷新。",
+                    true,
+                  );
+                } finally {
+                  applyingRemote.current = false;
+                  container.inert = wasInert;
+                }
+              },
+            };
           },
           publish: async (etag) =>
             saveResult(
@@ -228,9 +410,8 @@ function Editor({
 
   const queue = () => save.queue(serializeCanvas(current.current));
   const onChange: ExcalidrawProps["onChange"] = (elements, appState, files) => {
-    if (appState.isLoading) {
-      return;
-    }
+    if (!appState.isLoading && api.current) sceneReady.current?.resolve();
+    if (appState.isLoading || applyingRemote.current) return;
     // The public serializer removes transient UI state and unused/deleted files.
     const data = JSON.parse(
       serializeAsJSON(
@@ -253,8 +434,10 @@ function Editor({
       zoom: appState.zoom,
     });
     queue();
+    void save.resumeRemote();
   };
   const onLibraryChange = (items: LibraryItems) => {
+    if (applyingRemote.current) return;
     library.current = normalizeLibraryItems(items);
     current.current = { ...current.current, libraryItems: library.current };
     queue();
@@ -342,6 +525,7 @@ function Editor({
       ownerWindow.removeEventListener("online", online);
       doc.removeEventListener("visibilitychange", visibility);
       save.dispose();
+      sceneReady.current?.cancel();
       localState.dispose();
     };
   }, [save, id, clientId, localState]);
@@ -403,7 +587,14 @@ function Editor({
               queue();
             }
           }}
-          onBlur={() => setName(current.current.name)}
+          onFocus={() => {
+            editingName.current = true;
+          }}
+          onBlur={() => {
+            editingName.current = false;
+            setName(current.current.name);
+            void save.resumeRemote();
+          }}
         />
         <button onClick={() => void save.flush()}>保存 / 重试</button>
         <button onClick={exportBackup}>导出备份</button>
@@ -423,7 +614,8 @@ function Editor({
       )}
       <div className="drawing">
         <Excalidraw
-          initialData={initialScene}
+          key={scene.key}
+          initialData={scene.initialData}
           excalidrawAPI={(instance) => {
             api.current = instance;
           }}

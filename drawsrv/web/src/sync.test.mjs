@@ -29,7 +29,16 @@ async function setup(t, send, options = {}) {
     revision: "epoch-1",
     persisted: true,
     hashBody: hash,
-    refresh: () => refreshes.push(true),
+    loadSnapshot: async () => {
+      const value = body("remote");
+      return {
+        ...(await state(value, 50)),
+        body: value,
+        apply: () => {
+          refreshes.push(true);
+        },
+      };
+    },
     log: (decision, details) => logs.push({ decision, details }),
     publish: async () => state(body(), 100, { persisted: true }),
     ...options,
@@ -161,4 +170,162 @@ test("hash calculation failure does not loop, upload or automatically refresh", 
   await save.observeRemote(await state(body("remote")));
   assert.equal(attempts, 1);
   assert.equal(refreshes.length, 0);
+});
+
+test("snapshot fetch does not overwrite edits that arrive while it is in flight", async (t) => {
+  const fetchStarted = deferred(),
+    fetchDone = deferred();
+  let applied = 0;
+  const { save } = await setup(
+    t,
+    async (value) => state(value, 4, { applied: [0], dropped: [] }),
+    {
+      loadSnapshot: async () => {
+        fetchStarted.resolve();
+        return fetchDone.promise;
+      },
+    },
+  );
+  const pending = save.observeRemote(await state(body("remote"), 2));
+  await fetchStarted.promise;
+  save.queue(body("new local"));
+  fetchDone.resolve({
+    ...(await state(body("remote"), 3)),
+    body: body("remote"),
+    apply: () => {
+      applied++;
+    },
+  });
+  await pending;
+  assert.equal(applied, 0);
+  assert.equal(save.dirty, false);
+});
+test("adopted snapshot becomes the next conditional-save baseline", async (t) => {
+  const baselines = [];
+  const { save, refreshes } = await setup(t, async (value, etag, baseline) => {
+    baselines.push(baseline);
+    return state(value, 51, { applied: [0], dropped: [] });
+  });
+  await save.observeRemote(await state(body("remote"), 2));
+  save.queue(body("local after remote"));
+  await save.sync();
+  assert.deepEqual(baselines, [body("remote")]);
+  assert.equal(refreshes.length, 1);
+});
+test("a snapshot older than a newer SSE is discarded and fetched again", async (t) => {
+  const fetchStarted = deferred(),
+    fetchDone = deferred();
+  let loads = 0;
+  const adopted = [];
+  const { save } = await setup(t, () => assert.fail("unexpected upload"), {
+    loadSnapshot: async () => {
+      loads++;
+      if (loads === 1) {
+        fetchStarted.resolve();
+        return fetchDone.promise;
+      }
+      return {
+        ...(await state(body("newest"), 4)),
+        body: body("newest"),
+        apply: () => {
+          adopted.push("newest");
+        },
+      };
+    },
+  });
+  const pending = save.observeRemote(await state(body("remote"), 2));
+  await fetchStarted.promise;
+  await save.observeRemote(await state(body("newest"), 4));
+  fetchDone.resolve({
+    ...(await state(body("remote"), 3)),
+    body: body("remote"),
+    apply: () => {
+      adopted.push("stale");
+    },
+  });
+  await pending;
+  assert.equal(loads, 2);
+  assert.deepEqual(adopted, ["newest"]);
+});
+test("active editing defers loading and resumes without polling", async (t) => {
+  let busy = true;
+  const { save, refreshes } = await setup(
+    t,
+    () => assert.fail("unexpected upload"),
+    { canRefresh: () => !busy },
+  );
+  await save.observeRemote(await state(body("remote"), 2));
+  assert.equal(refreshes.length, 0);
+  busy = false;
+  await save.resumeRemote();
+  assert.equal(refreshes.length, 1);
+});
+test("disposing during snapshot fetch prevents an adoption", async (t) => {
+  const started = deferred(),
+    done = deferred();
+  let applied = 0;
+  const { save } = await setup(t, () => assert.fail("unexpected upload"), {
+    loadSnapshot: async () => {
+      started.resolve();
+      return done.promise;
+    },
+  });
+  const pending = save.observeRemote(await state(body("remote"), 2));
+  await started.promise;
+  save.dispose();
+  done.resolve({
+    ...(await state(body("remote"), 2)),
+    body: body("remote"),
+    apply: () => {
+      applied++;
+    },
+  });
+  await pending;
+  assert.equal(applied, 0);
+});
+
+test("a gesture starting during snapshot fetch defers the adoption", async (t) => {
+  const started = deferred(),
+    done = deferred();
+  let busy = false,
+    applied = 0;
+  const { save } = await setup(t, () => assert.fail("unexpected upload"), {
+    canRefresh: () => !busy,
+    loadSnapshot: async () => {
+      started.resolve();
+      return done.promise;
+    },
+  });
+  const pending = save.observeRemote(await state(body("remote"), 2));
+  await started.promise;
+  busy = true;
+  done.resolve({
+    ...(await state(body("remote"), 2)),
+    body: body("remote"),
+    apply: () => {
+      applied++;
+    },
+  });
+  await pending;
+  assert.equal(applied, 0);
+  busy = false;
+  await save.resumeRemote();
+  assert.equal(applied, 1);
+});
+test("invalid snapshot hashes block adoption and keep subsequent local edits dirty", async (t) => {
+  let applied = 0;
+  const { save } = await setup(t, () => assert.fail("unexpected upload"), {
+    loadSnapshot: async () => ({
+      ...(await state(body("other"), 2)),
+      body: body("remote"),
+      apply: () => {
+        applied++;
+      },
+    }),
+  });
+  await save.observeRemote(await state(body("remote"), 2));
+  assert.equal(applied, 0);
+  save.queue(body("local after failure"));
+  assert.equal(save.dirty, true);
+  assert.equal(await save.sync(), false);
 });
