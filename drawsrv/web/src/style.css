@@ -155,22 +155,9 @@ time {
   flex: 1;
   min-width: 120px;
   max-width: 320px;
+  margin-right: auto;
   border-color: transparent;
   font-weight: 600;
-}
-.save-state {
-  margin-left: auto;
-  font-size: 12px;
-  max-width: 400px;
-}
-.save-state.error,
-.save-state.conflict {
-  color: #a32342;
-  background: transparent;
-  padding: 0;
-}
-.save-state.saved {
-  color: #357253;
 }
 .drawing {
   flex: 1;
@@ -224,19 +211,10 @@ time {
     padding: 7px;
     font-size: 12px;
   }
-  .save-state {
-    order: 1;
-    flex: 1 0 100%;
-    max-width: none;
-  }
   .list-heading input {
     width: 45%;
   }
   .history {
     top: 120px;
   }
-}
-
-.save-state.synced {
-  color: #8a661a;
 }

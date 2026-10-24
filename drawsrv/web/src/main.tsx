@@ -131,12 +131,14 @@ function Editor({
   const current = useRef<Canvas>(loaded.canvas);
   const library = useRef(loaded.canvas.libraryItems);
   const [name, setName] = useState(loaded.canvas.name);
-  const [status, setStatus] = useState<SaveState>({
-    phase: loaded.persisted ? "saved" : "synced",
-    message: loaded.persisted
-      ? "已落盘 · 历史已记录"
-      : "已同步到服务器 · 等待落盘",
-  });
+  const lastSaveMessage = useRef<string | null>(null);
+  const logSaveState = (state: SaveState) => {
+    const entry = `[drawsrv:${state.phase}] ${state.message}`;
+    if (entry !== lastSaveMessage.current) {
+      console.log(entry);
+      lastSaveMessage.current = entry;
+    }
+  };
   const [history, setHistory] = useState<HistoryItem[] | null>(null);
   const [historyError, setHistoryError] = useState("");
   const [restoring, setRestoring] = useState(false);
@@ -156,7 +158,7 @@ function Editor({
           );
           return saveResult(response);
         },
-        setStatus,
+        logSaveState,
         2000,
         {
           persisted: loaded.persisted,
@@ -213,6 +215,14 @@ function Editor({
   useEffect(() => {
     const doc = node.current!.ownerDocument;
     const ownerWindow = doc.defaultView!;
+    if (lastSaveMessage.current === null) {
+      logSaveState({
+        phase: loaded.persisted ? "saved" : "synced",
+        message: loaded.persisted
+          ? "已落盘 · 历史已记录"
+          : "已同步到服务器 · 等待落盘",
+      });
+    }
     const beforeUnload = (event: BeforeUnloadEvent) => {
       if (save.dirty) {
         event.preventDefault();
@@ -328,9 +338,6 @@ function Editor({
           }}
           onBlur={() => setName(current.current.name)}
         />
-        <span className={`save-state ${status.phase}`} role="status">
-          {status.message}
-        </span>
         <button onClick={() => void save.flush()}>保存 / 重试</button>
         <button onClick={exportBackup}>导出备份</button>
         <button onClick={() => void showHistory()}>历史</button>
