@@ -254,7 +254,7 @@ func (s *store) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := hex.EncodeToString(key)
-	body, _ := json.MarshalIndent(snapshot{Name: strings.TrimSpace(request.Name), Elements: []json.RawMessage{}, AppState: map[string]json.RawMessage{}, Files: map[string]json.RawMessage{}, LibraryItems: []json.RawMessage{}}, "", "  ")
+	body, _ := json.MarshalIndent(snapshot{Name: strings.TrimSpace(request.Name), Elements: []json.RawMessage{}, Files: map[string]json.RawMessage{}, LibraryItems: []json.RawMessage{}}, "", "  ")
 	if err := s.save(id, body, nil, "canvas: create"); err != nil {
 		log.Print(err)
 		http.Error(w, "cannot commit canvas", 500)

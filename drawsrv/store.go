@@ -25,7 +25,6 @@ import (
 type snapshot struct {
 	Name         string                     `json:"name"`
 	Elements     []json.RawMessage          `json:"elements"`
-	AppState     map[string]json.RawMessage `json:"appState"`
 	Files        map[string]json.RawMessage `json:"files"`
 	LibraryItems []json.RawMessage          `json:"libraryItems"`
 }
@@ -308,14 +307,35 @@ func (s *store) loadState() error {
 
 func decodeSnapshot(body []byte) (*snapshot, error) {
 	var state snapshot
-	if json.Unmarshal(body, &state) != nil || state.Elements == nil || state.AppState == nil || state.Files == nil || strings.TrimSpace(state.Name) == "" || len(state.Name) > 200 {
-		return nil, errors.New("invalid canvas (name, elements, appState and files required)")
+	if json.Unmarshal(body, &state) != nil || state.Elements == nil || state.Files == nil || strings.TrimSpace(state.Name) == "" || len(state.Name) > 200 {
+		return nil, errors.New("invalid canvas (name, elements and files required)")
 	}
 	state.Name = strings.TrimSpace(state.Name)
 	if state.LibraryItems == nil {
 		state.LibraryItems = []json.RawMessage{}
 	}
 	return &state, nil
+}
+
+// Old history remains immutable. Project legacy snapshots onto the shared
+// document format before caching/serving, so old camera state cannot affect a
+// current ETag or leak into a newly connected client. Probe only appState: new
+// documents need no extra element/image allocations on a cache miss.
+func sharedSnapshot(body []byte) ([]byte, error) {
+	var legacy struct {
+		AppState json.RawMessage `json:"appState"`
+	}
+	if err := json.Unmarshal(body, &legacy); err != nil {
+		return nil, err
+	}
+	if len(legacy.AppState) == 0 {
+		return body, nil
+	}
+	state, err := decodeSnapshot(body)
+	if err != nil {
+		return nil, err
+	}
+	return json.MarshalIndent(state, "", "  ")
 }
 
 func (s *store) read(id string) ([]byte, error) {
@@ -344,6 +364,9 @@ func (s *store) readBlob(oid string) ([]byte, error) {
 		return nil, errors.New("committed canvas exceeds size limit")
 	}
 	body, err := s.git("cat-file", "blob", oid)
+	if err == nil {
+		body, err = sharedSnapshot(body)
+	}
 	if err == nil {
 		s.cache.add(oid, body)
 	}
