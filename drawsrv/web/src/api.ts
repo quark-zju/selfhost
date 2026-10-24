@@ -44,11 +44,19 @@ export function saveResult(response: Response) {
   if (value !== "true" && value !== "false") {
     throw new SaveError("服务器未返回保存状态，请导出当前内容后刷新", true);
   }
+  const hash = response.headers.get("X-Drawsrv-Hash");
+  if (!hash || !/^[a-f0-9]{64}$/.test(hash))
+    throw new SaveError("服务器未返回有效内容 HASH，请导出备份后刷新", true);
   const revision = response.headers.get("X-Drawsrv-Revision");
   if (!revision) {
     throw new SaveError("服务器未返回修订标识，请导出当前内容后刷新", true);
   }
-  return { etag: version(response), persisted: value === "true", revision };
+  return {
+    etag: version(response),
+    persisted: value === "true",
+    revision,
+    hash,
+  };
 }
 export async function loadCanvas(id: string) {
   const response = await checked(

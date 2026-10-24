@@ -6,7 +6,7 @@ import type {
   ExcalidrawProps,
   LibraryItems,
 } from "@excalidraw/excalidraw/types";
-import { Autosave, type SaveState } from "./autosave";
+import { Autosave, SaveError, type SaveState } from "./autosave";
 import {
   canvasURL,
   checked,
@@ -19,6 +19,7 @@ import "@excalidraw/excalidraw/index.css";
 import "./style.css";
 import { LocalAppStateStore } from "./localAppState";
 import { normalizeElements, normalizeLibraryItems } from "./normalize";
+import { serializeCanvas, diffCanvas, effectiveHash } from "./content";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : "请求失败";
@@ -139,40 +140,74 @@ function Editor({
   useEffect(() => {
     ownerWindow.document.title = `${name.trim() || current.current.name} | drawsrv`;
   }, [name, ownerWindow]);
+  const [conflict, setConflict] = useState("");
   const lastSaveMessage = useRef<string | null>(null);
   const logSaveState = (state: SaveState) => {
+    if (state.phase === "conflict") setConflict(state.message);
     const entry = `[drawsrv:${state.phase}] ${state.message}`;
     if (entry !== lastSaveMessage.current) {
       console.log(entry);
       lastSaveMessage.current = entry;
     }
   };
-  const [remoteUpdate, setRemoteUpdate] = useState(false);
   const [save] = useState(
     () =>
       new Autosave(
-        JSON.stringify(loaded.canvas),
+        serializeCanvas(loaded.canvas),
         loaded.etag,
-        async (body, etag) => {
+        async (body, _etag, baseline) => {
+          const changes = diffCanvas(baseline, body);
           const response = await checked(
-            await fetch(canvasURL(id), {
-              method: "PUT",
+            await fetch(`${canvasURL(id)}/changes`, {
+              method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                "If-Match": etag,
                 "X-Drawsrv-Client": clientId,
               },
-              body,
+              body: JSON.stringify({ changes }),
             }),
           );
-          setRemoteUpdate(false);
-          return saveResult(response);
+          const result = await response.json();
+          const state = saveResult(response);
+          const indexes = [
+            ...(result.applied || []),
+            ...(result.dropped || []).map(
+              (entry: { index: number }) => entry.index,
+            ),
+          ];
+          if (
+            !Array.isArray(result.applied) ||
+            !Array.isArray(result.dropped) ||
+            result.hash !== state.hash ||
+            indexes.length !== changes.length ||
+            new Set(indexes).size !== changes.length ||
+            indexes.some(
+              (index) =>
+                !Number.isInteger(index) ||
+                index < 0 ||
+                index >= changes.length,
+            )
+          ) {
+            throw new SaveError(
+              "服务端返回了无效的应用结果，请导出备份后刷新",
+              true,
+            );
+          }
+          return { ...state, applied: result.applied, dropped: result.dropped };
         },
         logSaveState,
         2000,
         {
           persisted: loaded.persisted,
           revision: loaded.revision,
+          hash: loaded.hash,
+          hashBody: (body) => effectiveHash(body, ownerWindow.crypto),
+          log: (decision, details) =>
+            console.log(`[drawsrv:sync] ${decision}`, details ?? ""),
+          refresh: () => {
+            localState.flush();
+            ownerWindow.location.reload();
+          },
           publish: async (etag) =>
             saveResult(
               await checked(
@@ -191,7 +226,7 @@ function Editor({
       ),
   );
 
-  const queue = () => save.queue(JSON.stringify(current.current));
+  const queue = () => save.queue(serializeCanvas(current.current));
   const onChange: ExcalidrawProps["onChange"] = (elements, appState, files) => {
     if (appState.isLoading) {
       return;
@@ -262,21 +297,17 @@ function Editor({
         const data = JSON.parse((event as MessageEvent<string>).data);
         if (
           typeof data.etag !== "string" ||
+          typeof data.hash !== "string" ||
           typeof data.revision !== "string" ||
           typeof data.persisted !== "boolean" ||
           typeof data.source !== "string"
         ) {
           return;
         }
-        save.observePersistence(data.etag, data.persisted, data.revision);
-        if (data.source === clientId) {
-          setRemoteUpdate(false);
-        } else if (data.revision !== save.revision) {
-          console.log(
-            "[drawsrv:remote] 其他客户端已更新此画布，可重新加载查看",
-          );
-          setRemoteUpdate(true);
-        }
+        void save.observeRemote(data, data.source).catch((error) => {
+          console.log("[drawsrv:sync] 同步决策失败，保留本地内容", error);
+          setConflict("无法确认同步状态，请导出备份后手动刷新。");
+        });
       } catch {
         console.log("[drawsrv:events] 忽略无效的状态通知");
       }
@@ -328,7 +359,17 @@ function Editor({
         )
       : current.current;
     const blob = new Blob(
-      [JSON.stringify({ ...data, libraryItems: library.current }, null, 2)],
+      [
+        JSON.stringify(
+          {
+            ...data,
+            name: current.current.name,
+            libraryItems: library.current,
+          },
+          null,
+          2,
+        ),
+      ],
       { type: "application/json" },
     );
     const url = ownerWindow.URL.createObjectURL(blob);
@@ -367,9 +408,10 @@ function Editor({
         <button onClick={() => void save.flush()}>保存 / 重试</button>
         <button onClick={exportBackup}>导出备份</button>
       </header>
-      {remoteUpdate && (
+      {conflict && (
         <div className="remote-update" role="status">
-          <span>其他客户端已更新此画布，重新加载可查看最新内容。</span>
+          <span>{conflict}</span>
+          <button onClick={exportBackup}>导出备份</button>
           <button
             onClick={() =>
               node.current!.ownerDocument.defaultView?.location.reload()

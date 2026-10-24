@@ -1,0 +1,164 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { webcrypto } from "node:crypto";
+import { Autosave } from "./autosave.ts";
+import { serializeCanvas, effectiveHash } from "./content.ts";
+
+const body = (name = "base") =>
+  serializeCanvas({ name, elements: [], files: {}, libraryItems: [] });
+const hash = (value) => effectiveHash(value, webcrypto);
+const state = async (value, sequence = 2, extras = {}) => ({
+  etag: `etag-${sequence}`,
+  revision: `epoch-${sequence}`,
+  persisted: false,
+  hash: await hash(value),
+  ...extras,
+});
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+};
+async function setup(t, send, options = {}) {
+  const refreshes = [],
+    logs = [];
+  const save = new Autosave(body(), "etag-1", send, () => {}, 2000, {
+    hash: await hash(body()),
+    revision: "epoch-1",
+    persisted: true,
+    hashBody: hash,
+    refresh: () => refreshes.push(true),
+    log: (decision, details) => logs.push({ decision, details }),
+    publish: async () => state(body(), 100, { persisted: true }),
+    ...options,
+  });
+  t.after(() => save.dispose());
+  return { save, refreshes, logs };
+}
+test("SSE with compatible effective content updates metadata without refreshing", async (t) => {
+  const { save, refreshes } = await setup(t, () =>
+    assert.fail("unexpected upload"),
+  );
+  await save.observeRemote(await state(body(), 2, { persisted: true }));
+  assert.equal(save.version, "etag-2");
+  assert.equal(refreshes.length, 0);
+});
+test("SSE with different content refreshes a clean client", async (t) => {
+  const { save, refreshes } = await setup(t, () =>
+    assert.fail("unexpected upload"),
+  );
+  await save.observeRemote(await state(body("remote")));
+  assert.equal(refreshes.length, 1);
+});
+test("dirty SSE first applies local changes, then compares acknowledged content", async (t) => {
+  const sends = [];
+  const { save, refreshes } = await setup(t, async (value, etag, baseline) => {
+    sends.push({ value, baseline });
+    return state(value, 3, { applied: [0], dropped: [] });
+  });
+  save.queue(body("local"));
+  await save.observeRemote(await state(body("remote"), 2));
+  assert.equal(sends.length, 1);
+  assert.equal(sends[0].baseline, body());
+  assert.equal(save.dirty, false);
+  assert.equal(refreshes.length, 0);
+  // An older event cannot make this acknowledged state look stale.
+  await save.observeRemote(await state(body("old remote"), 2));
+  assert.equal(refreshes.length, 0);
+});
+test("a partial apply preserves local content and blocks uploads and automatic refresh", async (t) => {
+  let uploads = 0;
+  const { save, refreshes, logs } = await setup(t, async () => {
+    uploads++;
+    return state(body("server"), 3, {
+      applied: [0],
+      dropped: [{ index: 1, reason: "field precondition changed" }],
+    });
+  });
+  save.queue(body("local"));
+  assert.equal(await save.sync(), false);
+  assert.equal(save.dirty, true);
+  await save.observeRemote(await state(body("other"), 4));
+  save.queue(body("more local"));
+  assert.equal(await save.sync(), false);
+  assert.equal(uploads, 1);
+  assert.equal(refreshes.length, 0);
+  assert.ok(
+    logs.some(
+      ({ decision, details }) =>
+        decision === "保存结果" && details.dropped === 1,
+    ),
+  );
+});
+test("edits during an ACK are sent against the acknowledged baseline before a refresh", async (t) => {
+  const first = deferred(),
+    started = deferred();
+  const sends = [];
+  const { save, refreshes } = await setup(t, async (value, etag, baseline) => {
+    sends.push({ value, baseline });
+    if (sends.length === 1) {
+      started.resolve();
+      return first.promise;
+    }
+    return state(body("merged remote"), 4, { applied: [0], dropped: [] });
+  });
+  save.queue(body("first"));
+  const running = save.sync();
+  await started.promise;
+  save.queue(body("second"));
+  first.resolve(
+    await state(body("merged remote"), 3, { applied: [0], dropped: [] }),
+  );
+  await running;
+  assert.equal(sends.length, 2);
+  assert.equal(sends[1].baseline, body("first"));
+  assert.equal(sends[1].value, body("second"));
+  assert.equal(refreshes.length, 1);
+  assert.equal(save.dirty, false);
+});
+test("new edits during asynchronous hash comparison prevent an automatic refresh", async (t) => {
+  const comparing = deferred(),
+    release = deferred();
+  let comparisons = 0;
+  const { save, refreshes } = await setup(
+    t,
+    async (value) => state(value, 3, { applied: [0], dropped: [] }),
+    {
+      hashBody: async (value) => {
+        comparisons++;
+        if (comparisons === 1) {
+          comparing.resolve();
+          await release.promise;
+        }
+        return hash(value);
+      },
+    },
+  );
+  const event = save.observeRemote(await state(body("remote")));
+  await comparing.promise;
+  save.queue(body("new local"));
+  release.resolve();
+  await event;
+  assert.equal(refreshes.length, 0);
+  await save.sync();
+  assert.equal(save.dirty, false);
+});
+
+test("hash calculation failure does not loop, upload or automatically refresh", async (t) => {
+  let attempts = 0;
+  const { save, refreshes } = await setup(
+    t,
+    () => assert.fail("unexpected upload"),
+    {
+      hashBody: async () => {
+        attempts++;
+        throw Error("hash unavailable");
+      },
+    },
+  );
+  await save.observeRemote(await state(body("remote")));
+  assert.equal(attempts, 1);
+  assert.equal(refreshes.length, 0);
+});
