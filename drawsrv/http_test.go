@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -19,6 +17,7 @@ func testStore(t *testing.T) *store {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { s.Close() })
 	return s
 }
 func request(s *store, method, path, body, etag string) *httptest.ResponseRecorder {
@@ -110,63 +109,102 @@ func TestCanvasLifecycle(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), other) {
 		t.Fatal("canvas missing from list")
 	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
 	restarted, err := openStore(s.dir, s.limit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := restarted.recover(); err != nil {
-		t.Fatal(err)
-	}
+	t.Cleanup(func() { restarted.Close() })
 	if len(history(t, restarted, id)) != 3 {
 		t.Fatal("restart generated spurious commit")
 	}
 }
 
-func TestFailedGitCommitRollsBack(t *testing.T) {
+func TestFailedGitPublicationLeavesHEADUnchanged(t *testing.T) {
 	s := testStore(t)
 	id, original, etag := createCanvas(t, s)
-	lock := filepath.Join(s.dir, ".git", "index.lock")
+	before := s.head
+	lock := filepath.Join(s.dir, "refs", "heads", "main.lock")
 	if err := os.WriteFile(lock, []byte("test"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	body := strings.Replace(original, "我的画布", "changed", 1)
 	w := request(s, "PUT", "/api/canvases/"+id, body, etag)
 	if w.Code != 500 {
-		t.Fatalf("expected Git failure, got %d", w.Code)
+		t.Fatalf("expected publication failure, got %d: %s", w.Code, w.Body.String())
 	}
-	os.Remove(lock)
-	restored, err := os.ReadFile(filepath.Join(s.dir, id+".json"))
-	if err != nil || string(restored) != original {
-		t.Fatal("failed save changed disk content")
+	if err := os.Remove(lock); err != nil {
+		t.Fatal(err)
 	}
-	// An index lock also prevents index rollback, so fail closed until restart.
+	head, err := s.git("rev-parse", "HEAD")
+	if err != nil || strings.TrimSpace(string(head)) != before {
+		t.Fatal("failed save changed HEAD")
+	}
 	if !s.failed {
-		t.Fatal("expected writes blocked after rollback failure")
+		t.Fatal("writes must stop after uncertain publication")
 	}
+	s.Close()
 	restarted, err := openStore(s.dir, s.limit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := restarted.recover(); err != nil {
-		t.Fatal(err)
+	defer restarted.Close()
+	w = request(restarted, "GET", "/api/canvases/"+id, "", "")
+	if w.Code != 200 || w.Body.String() != original {
+		t.Fatal("restart did not recover last published canvas")
 	}
 	if len(history(t, restarted, id)) != 1 {
-		t.Fatal("failure created history")
+		t.Fatal("unpublished commit appeared in history")
+	}
+	// Later saves build on HEAD, not the dangling objects from the failed save.
+	if w = request(restarted, "PUT", "/api/canvases/"+id, body, etag); w.Code != 204 {
+		t.Fatalf("retry %d: %s", w.Code, w.Body.String())
+	}
+	if len(history(t, restarted, id)) != 2 {
+		t.Fatal("retry history is incorrect")
 	}
 }
 
-func TestRecoverInterruptedSave(t *testing.T) {
+func TestBareStoreHasNoWorkingCopyOrIndex(t *testing.T) {
+	s := testStore(t)
+	id, _, _ := createCanvas(t, s)
+	bare, err := s.git("rev-parse", "--is-bare-repository")
+	if err != nil || strings.TrimSpace(string(bare)) != "true" {
+		t.Fatalf("not bare: %s %v", bare, err)
+	}
+	for _, name := range []string{".git", "index", id + ".json", statePath} {
+		if _, err := os.Lstat(filepath.Join(s.dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("unexpected working file %s: %v", name, err)
+		}
+	}
+	// The state and canvas still exist in the committed logical tree.
+	tree, err := s.git("ls-tree", "--name-only", "HEAD")
+	if err != nil || !strings.Contains(string(tree), id+".json") || !strings.Contains(string(tree), statePath) {
+		t.Fatalf("tree: %s %v", tree, err)
+	}
+}
+
+func TestUnpublishedObjectsAreIgnoredAfterRestart(t *testing.T) {
 	s := testStore(t)
 	id, original, _ := createCanvas(t, s)
-	changed := strings.Replace(original, "我的画布", "recovered", 1)
-	if err := atomicWrite(filepath.Join(s.dir, id+".json"), []byte(changed)); err != nil {
+	head := s.head
+	if _, err := s.writeBlob([]byte(strings.Replace(original, "我的画布", "unpublished", 1))); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.recover(); err != nil {
+	s.Close()
+	restarted, err := openStore(s.dir, s.limit)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(history(t, s, id)) != 2 {
-		t.Fatal("interrupted save not committed")
+	defer restarted.Close()
+	if restarted.head != head {
+		t.Fatal("unpublished objects changed HEAD")
+	}
+	w := request(restarted, "GET", "/api/canvases/"+id, "", "")
+	if w.Body.String() != original {
+		t.Fatal("read unpublished data")
 	}
 }
 
@@ -252,18 +290,161 @@ func TestStaticAndAPIRouting(t *testing.T) {
 	}
 }
 
-func TestListingReadsOnlyMetadata(t *testing.T) {
-	// A limited reader ensures the large files field is never read.
-	data := []byte(`{"name":"small","files":"` + strings.Repeat("x", 1<<20) + `"}`)
-	name, err := readName(io.LimitReader(bytes.NewReader(data), 32))
-	if err != nil || name != "small" {
-		t.Fatalf("%s %v", name, err)
+func TestListingUsesCommittedMetadata(t *testing.T) {
+	s := testStore(t)
+	id, _, _ := createCanvas(t, s)
+	// Removing Git from PATH demonstrates that list never forks Git or reads
+	// canvas blobs; only the committed lightweight manifest is needed.
+	t.Setenv("PATH", t.TempDir())
+	w := request(s, "GET", "/api/canvases", "", "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), id) || !strings.Contains(w.Body.String(), "我的画布") {
+		t.Fatalf("list: %d %s", w.Code, w.Body.String())
 	}
 }
+
 func TestStoreRequiresOwnEmptyDirectory(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "unrelated.txt"), []byte("keep"), 0600)
 	if _, err := openStore(dir, 1<<20); err == nil {
 		t.Fatal("accepted nonempty directory without own repository")
+	}
+}
+
+func TestStoreRejectsWorkingCopyWithoutMigration(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "old.json")
+	if err := os.WriteFile(path, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openStore(dir, 1<<20); err == nil || !strings.Contains(err.Error(), "working copy") {
+		t.Fatalf("expected working-copy rejection: %v", err)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "keep" {
+		t.Fatal("old data changed")
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "HEAD")); !os.IsNotExist(err) {
+		t.Fatal("unexpected bare initialization")
+	}
+}
+
+func TestStoreLockPreventsSecondWriter(t *testing.T) {
+	s := testStore(t)
+	if other, err := openStore(s.dir, s.limit); err == nil {
+		other.Close()
+		t.Fatal("second writer accepted")
+	}
+}
+
+func TestMissingHEADNeverReinitializesHistory(t *testing.T) {
+	for _, remove := range []string{"HEAD", "refs/heads/main"} {
+		t.Run(remove, func(t *testing.T) {
+			s := testStore(t)
+			createCanvas(t, s)
+			s.Close()
+			if err := os.Remove(filepath.Join(s.dir, filepath.FromSlash(remove))); err != nil {
+				t.Fatal(err)
+			}
+			if other, err := openStore(s.dir, s.limit); err == nil {
+				other.Close()
+				t.Fatal("missing HEAD silently initialized new history")
+			}
+		})
+	}
+}
+
+func TestGitEnvironmentCannotRedirectWrites(t *testing.T) {
+	s := testStore(t)
+	t.Setenv("GIT_DIR", t.TempDir())
+	t.Setenv("GIT_WORK_TREE", t.TempDir())
+	t.Setenv("GIT_INDEX_FILE", filepath.Join(t.TempDir(), "index"))
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "core.bare")
+	t.Setenv("GIT_CONFIG_VALUE_0", "false")
+	id, _, _ := createCanvas(t, s)
+	if len(history(t, s, id)) != 1 {
+		t.Fatal("Git environment affected repository")
+	}
+	if _, err := os.Stat(filepath.Join(s.dir, "index")); !os.IsNotExist(err) {
+		t.Fatal("created index")
+	}
+}
+
+func TestPublicationRejectsUnexpectedExternalHEAD(t *testing.T) {
+	s := testStore(t)
+	id, original, etag := createCanvas(t, s)
+	// Simulate an unsupported external writer. CAS publication must fail rather
+	// than overwrite the external branch with the service's stale cached tree.
+	external, err := s.git("commit-tree", s.head+"^{tree}", "-p", s.head, "-m", "external writer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	externalID := strings.TrimSpace(string(external))
+	if _, err := s.git("update-ref", s.ref, externalID, s.head); err != nil {
+		t.Fatal(err)
+	}
+	body := strings.Replace(original, "我的画布", "changed", 1)
+	w := request(s, "PUT", "/api/canvases/"+id, body, etag)
+	if w.Code != 500 || !s.failed {
+		t.Fatal("stale service state accepted")
+	}
+	head, err := s.git("rev-parse", "HEAD")
+	if err != nil || strings.TrimSpace(string(head)) != externalID {
+		t.Fatal("overwrote external HEAD")
+	}
+}
+
+func TestBareStoreSupportsSHA256Objects(t *testing.T) {
+	dir := t.TempDir()
+	initializer := &store{dir: dir}
+	if _, err := initializer.git("init", "--bare", "--template=", "--initial-branch=main", "--object-format=sha256"); err != nil {
+		t.Fatal(err)
+	}
+	s, err := openStore(dir, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	id, _, _ := createCanvas(t, s)
+	if len(s.head) != 64 || len(s.state.Canvases[id].Blob) != 64 {
+		t.Fatal("SHA256 object IDs were not preserved")
+	}
+}
+
+func TestStartupRejectsMismatchedCommittedIndex(t *testing.T) {
+	s := testStore(t)
+	id, _, _ := createCanvas(t, s)
+	// Commit a malformed index/tree combination through the low-level publisher.
+	next := s.state
+	meta := next.Canvases[id]
+	meta.Blob = strings.Repeat("0", 40)
+	next.Canvases[id] = meta
+	data, _ := json.Marshal(next)
+	blob, err := s.writeBlob(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Replace just state.json while preserving the original canvas blob.
+	canvasBlob, err := s.git("rev-parse", "HEAD:"+id+".json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := s.gitInput(strings.NewReader("100644 blob "+strings.TrimSpace(string(canvasBlob))+"\t"+id+".json\n100644 blob "+blob+"\tstate.json\n"), "mktree")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, err := s.git("commit-tree", strings.TrimSpace(string(tree)), "-p", s.head, "-m", "invalid state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.git("update-ref", s.ref, strings.TrimSpace(string(commit)), s.head); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if other, err := openStore(s.dir, s.limit); err == nil {
+		other.Close()
+		t.Fatal("invalid committed index accepted")
 	}
 }

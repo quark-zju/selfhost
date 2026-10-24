@@ -4,14 +4,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -89,7 +87,7 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.failed {
-		http.Error(w, "storage needs restart after failed rollback", 503)
+		http.Error(w, "storage needs restart after uncertain Git publication", 503)
 		return
 	}
 	if collection {
@@ -100,8 +98,16 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	current, err := os.ReadFile(filepath.Join(s.dir, id+".json"))
-	if os.IsNotExist(err) {
+	if action == "history" {
+		if _, ok := s.state.Canvases[id]; !ok {
+			http.NotFound(w, r)
+			return
+		}
+		s.history(w, r, id)
+		return
+	}
+	current, err := s.read(id)
+	if errors.Is(err, errCanvasNotFound) {
 		http.NotFound(w, r)
 		return
 	}
@@ -110,10 +116,6 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("ETag", revision(current))
-	if action == "history" {
-		s.history(w, r, id)
-		return
-	}
 	if r.Method == "GET" {
 		w.Write(current)
 		return
@@ -132,7 +134,11 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// IDs are validated and never interpreted as command options or paths.
-		body, err = s.git("show", request.Commit+":"+id+".json")
+		var object []byte
+		object, err = s.git("rev-parse", "--verify", request.Commit+":"+id+".json")
+		if err == nil {
+			body, err = s.readBlob(strings.TrimSpace(string(object)))
+		}
 		if err != nil {
 			http.Error(w, "revision not found", 404)
 			return
@@ -173,64 +179,22 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *store) list(w http.ResponseWriter, r *http.Request) {
-	entries, err := os.ReadDir(s.dir)
-	if err != nil {
-		http.Error(w, "cannot list canvases", 500)
-		return
-	}
 	type item struct {
 		ID      string    `json:"id"`
 		Name    string    `json:"name"`
 		Updated time.Time `json:"updated"`
 	}
-	items := []item{}
-	for _, entry := range entries {
-		id := strings.TrimSuffix(entry.Name(), ".json")
-		if !canvasID.MatchString(id) || entry.Name() != id+".json" || !entry.Type().IsRegular() {
-			continue
-		}
-		f, err := os.Open(filepath.Join(s.dir, entry.Name()))
-		if err != nil {
-			http.Error(w, "cannot read canvas", 500)
-			return
-		}
-		name, err := readName(f)
-		f.Close()
-		info, statErr := entry.Info()
-		if err != nil || statErr != nil {
-			http.Error(w, "cannot read canvas metadata", 500)
-			return
-		}
-		items = append(items, item{id, name, info.ModTime()})
+	items := make([]item, 0, len(s.state.Canvases))
+	for id, meta := range s.state.Canvases {
+		items = append(items, item{id, meta.Name, meta.Updated})
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].Updated.After(items[j].Updated) })
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Updated.Equal(items[j].Updated) {
+			return items[i].ID < items[j].ID
+		}
+		return items[i].Updated.After(items[j].Updated)
+	})
 	json.NewEncoder(w).Encode(items)
-}
-
-// Name is the first field in the canonical format; don't load image blobs just
-// to list canvases. Noncanonical files are validated on recovery.
-func readName(reader io.Reader) (string, error) {
-	decoder := json.NewDecoder(reader)
-	token, err := decoder.Token()
-	if err != nil || token != json.Delim('{') {
-		return "", fmt.Errorf("invalid canvas")
-	}
-	for decoder.More() {
-		key, err := decoder.Token()
-		if err != nil {
-			return "", err
-		}
-		if key == "name" {
-			var name string
-			err = decoder.Decode(&name)
-			return name, err
-		}
-		var ignored json.RawMessage
-		if err := decoder.Decode(&ignored); err != nil {
-			return "", err
-		}
-	}
-	return "", fmt.Errorf("name missing")
 }
 
 func (s *store) create(w http.ResponseWriter, r *http.Request) {

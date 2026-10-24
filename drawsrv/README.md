@@ -12,7 +12,7 @@
 
 ## 本地构建与运行
 
-构建需要 Go 1.24+、Git、Node.js 22.18+（或 24+）、npm。VPS 运行时只需要编译后的 Go 程序、前端静态文件和系统 Git。
+构建需要 Go 1.24+、Git 2.36+、Node.js 22.18+（或 24+）、npm。VPS 运行时只需要编译后的 Go 程序、前端静态文件和系统 Git。
 
 ```sh
 cd drawsrv
@@ -20,7 +20,7 @@ make build
 ./bin/drawsrv -static ./web/dist -data ./data -listen 127.0.0.1:8080
 ```
 
-浏览器打开 `http://127.0.0.1:8080`。首次运行会在空数据目录中创建独立 Git 仓库，使用本地提交身份 `drawsrv <drawsrv@localhost>`，无需配置全局 Git 用户，也不会推送到远程。
+浏览器打开 `http://127.0.0.1:8080`。首次运行会在空数据目录中创建独立 bare Git 仓库，使用本地提交身份 `drawsrv <drawsrv@localhost>`，无需配置全局 Git 用户，也不会推送到远程。
 
 开发时先构建一次静态页面并启动 Go，再在另一终端运行 `npm --prefix web run dev`；Vite 将 `/api` 转发到 Go 服务。
 
@@ -54,32 +54,50 @@ ARM64 VPS 使用 `GOARCH=arm64`。将 `bin/drawsrv` 和整个 `web/dist/` 上传
 
 ## 数据、内存与历史
 
+`-data` 指向的目录本身是 bare Git 仓库，没有 working copy 或 index：
+
 ```text
 data/
-├── .git/                 # 独立的运行数据历史
+├── HEAD
+├── objects/
+├── refs/
+├── config
+└── drawsrv.lock          # 单进程锁，不属于提交内容
+```
+
+提交中的逻辑文件树为：
+
+```text
+HEAD
+├── state.json           # 画布名称、更新时间和 blob ID 的轻量索引
 ├── <canvas-id>.json      # 名称、元素、设置、图片和素材库
 └── ...
 ```
 
-数据目录必须在静态目录之外；不要让反代直接公开数据目录，也不要将其放进代码仓库。首次初始化要求空目录。每个数据目录只允许一个服务进程，进程锁会在退出或崩溃后自动释放。
+数据目录必须在静态目录之外；不要让反代直接公开数据目录，也不要将其放进代码仓库。首次初始化要求空目录，也可以使用新的空 bare 仓库。每个数据目录只允许一个服务进程，进程锁会在退出或崩溃后自动释放。
 
-Go 不会常驻缓存所有画布。列表只读取名称和文件时间，状态读写与 Git 提交串行执行，以限制同时存在的大对象。默认单画布最多 16 MiB（包含 base64 图片及 JSON 格式化开销），可用 `-max-canvas-mib` 调整。内存峰值仍随单画布大小增大，不能将 Go 的空闲内存占用视为大图保存时的上限。
+不提供旧 working-copy 格式的迁移。含 `.git/` 的旧数据目录会被明确拒绝，原目录保持不变；请为新版本指定新的空数据目录。
+
+Go 仅缓存提交中画布列表的轻量元数据，不常驻缓存画布内容。列表直接使用该索引；读取画布时按需从 Git blob 加载。状态读写与 Git 提交串行执行，以限制同时存在的大对象。默认单画布最多 16 MiB（包含 base64 图片及 JSON 格式化开销），可用 `-max-canvas-mib` 调整。内存峰值仍随单画布大小增大，不能将 Go 的空闲内存占用视为大图保存时的上限。
+
+保存使用 `hash-object`、`mktree`、`commit-tree` 写入不可变对象，再用带旧值校验的 `update-ref` 原子发布分支；不创建工作文件或 index。与 picomx 一样，Git 对 committed 对象和引用启用 `fsync`，隔离继承的 Git 环境及全局配置，禁用 hooks、签名和隐式自动维护。这里使用短生命周期 Git 子进程，空闲时不保留 Git 进程。
+
+HEAD 指向的提交是唯一权威状态。发布前中断只会留下未引用对象；发布后重启直接读取提交中的索引，无需扫描画布、补记提交或回滚文件。ref 发布失败或结果不确定时服务停止读写，请排除磁盘或锁文件问题后重启。已有 Git 数据但 HEAD/ref 丢失时拒绝自动初始化，需要先修复引用。不要在服务运行时执行外部 Git 写操作或维护仓库。
 
 systemd 示例的 `GOMEMLIMIT=64MiB` 是 Go 运行时的软目标，并非服务或 Git 子进程的硬上限。运行时自动 Git GC 已关闭，避免保存时触发高开销打包。含图片的频繁保存会增加磁盘占用；可在服务停止时按需运行：
 
 ```sh
-git -C /var/lib/drawsrv -c pack.threads=1 -c pack.windowMemory=8m gc
+git --git-dir=/var/lib/drawsrv -c pack.threads=1 -c pack.windowMemory=8m gc --prune=never
 ```
 
-备份整个数据目录（含 `.git`）。为获得一致备份，先停止服务或使用文件系统快照。Git 历史不替代异机备份。
-
-写入采用临时文件、`fsync` 和原子替换，再提交 Git；Git 失败会尝试回滚。若进程在替换文件后、提交前中断，下次启动会校验状态文件并补记恢复提交。状态文件写入或回滚失败时服务拒绝继续读写，需检查磁盘/Git 状态并重启。不要在服务运行时手动编辑状态文件、执行 Git 写操作或维护仓库。
+备份整个 bare 仓库目录。为获得一致备份，先停止服务或使用文件系统快照。Git 历史不替代异机备份。
 
 网页展示最近 100 次提交；更早的历史仍保留在 Git：
 
 ```sh
-git -C /var/lib/drawsrv log --oneline -- <canvas-id>.json
-git -C /var/lib/drawsrv show <commit>:<canvas-id>.json
+git --git-dir=/var/lib/drawsrv log --oneline -- <canvas-id>.json
+git --git-dir=/var/lib/drawsrv show <commit>:<canvas-id>.json
+git --git-dir=/var/lib/drawsrv show HEAD:state.json
 ```
 
 ## 当前边界

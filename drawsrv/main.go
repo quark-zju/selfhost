@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -51,18 +50,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// Only one service may write this Git repository; flock is released after crashes.
-	lock, err := os.OpenFile(filepath.Join(dataPath, ".git", "drawsrv.lock"), os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		log.Fatal("data directory already in use: ", err)
-	}
-	if err := s.recover(); err != nil {
-		log.Fatal(err)
-	}
+	defer s.Close()
 	staticRoot, err := os.OpenRoot(staticPath)
 	if err != nil {
 		log.Fatal(err)
