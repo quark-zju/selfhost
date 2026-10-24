@@ -16,9 +16,13 @@ func main() {
 	static := flag.String("static", "web/dist", "built frontend directory")
 	data := flag.String("data", "data", "private Git data directory, outside static directory")
 	limit := flag.Int64("max-canvas-mib", 16, "maximum canvas size including base64 images")
+	cacheMiB := flag.Int("cache-mib", 4, "maximum cached canvas payload MiB (0 disables; at most 64 entries)")
 	flag.Parse()
 	if *limit < 1 || *limit > 256 {
 		log.Fatal("max-canvas-mib must be 1..256")
+	}
+	if *cacheMiB < 0 || *cacheMiB > 256 {
+		log.Fatal("cache-mib must be 0..256")
 	}
 	if err := os.MkdirAll(*data, 0700); err != nil {
 		log.Fatal(err)
@@ -51,6 +55,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer s.Close()
+	s.cache = newBlobCache(*cacheMiB << 20)
 	staticRoot, err := os.OpenRoot(staticPath)
 	if err != nil {
 		log.Fatal(err)

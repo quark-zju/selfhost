@@ -49,6 +49,7 @@ type store struct {
 	head   string
 	ref    string
 	state  storeState
+	cache  *blobCache
 }
 
 var canvasID = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -129,7 +130,7 @@ func openStore(dir string, limit int64) (result *store, err error) {
 			}
 		}
 	}
-	s := &store{dir: dir, limit: limit}
+	s := &store{dir: dir, limit: limit, cache: newBlobCache(defaultCacheBytes)}
 	s.lock, err = os.OpenFile(filepath.Join(dir, "drawsrv.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
@@ -298,6 +299,9 @@ func (s *store) read(id string) ([]byte, error) {
 	return s.readBlob(meta.Blob)
 }
 func (s *store) readBlob(oid string) ([]byte, error) {
+	if body, ok := s.cache.get(oid); ok {
+		return body, nil
+	}
 	size, err := s.git("cat-file", "-s", oid)
 	if err != nil {
 		return nil, err
@@ -306,7 +310,11 @@ func (s *store) readBlob(oid string) ([]byte, error) {
 	if err != nil || n < 0 || n > s.limit {
 		return nil, errors.New("committed canvas exceeds size limit")
 	}
-	return s.git("cat-file", "blob", oid)
+	body, err := s.git("cat-file", "blob", oid)
+	if err == nil {
+		s.cache.add(oid, body)
+	}
+	return body, err
 }
 func (s *store) writeBlob(body []byte) (string, error) {
 	out, err := s.gitInput(bytes.NewReader(body), "hash-object", "-w", "--stdin")
@@ -337,7 +345,11 @@ func (s *store) save(id string, body, previous []byte, message string) error {
 		next.Canvases[key] = meta
 	}
 	next.Canvases[id] = canvasMetadata{Name: state.Name, Updated: time.Now().UTC(), Blob: blob}
-	return s.publish(next, message+" "+id)
+	if err := s.publish(next, message+" "+id); err != nil {
+		return err
+	}
+	s.cache.add(blob, body)
+	return nil
 }
 
 // Write immutable blobs/tree/commit first, then atomically publish the branch
