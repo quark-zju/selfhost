@@ -596,7 +596,7 @@ function Editor({
             void save.resumeRemote();
           }}
         />
-        <button onClick={() => void save.flush()}>保存 / 重试</button>
+        <button onClick={() => void save.flush()}>保存</button>
         <button onClick={exportBackup}>导出备份</button>
       </header>
       {conflict && (
