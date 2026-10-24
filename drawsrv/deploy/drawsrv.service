@@ -8,9 +8,14 @@ User=drawsrv
 Group=drawsrv
 StateDirectory=drawsrv
 StateDirectoryMode=0700
-WorkingDirectory=/opt/drawsrv
-ExecStart=/opt/drawsrv/drawsrv -listen 127.0.0.1:8080 -static /opt/drawsrv/web -data /var/lib/drawsrv
+WorkingDirectory=/usr/local/share/drawsrv
+Environment=DRAWSRV_LISTEN=127.0.0.1:8080
+Environment=DRAWSRV_MAX_CANVAS_MIB=16
+Environment=DRAWSRV_CACHE_MIB=4
+Environment=DRAWSRV_MAINTENANCE_DELAY=10m
 Environment=GOMEMLIMIT=64MiB
+EnvironmentFile=-/etc/drawsrv/drawsrv.env
+ExecStart=/usr/local/bin/drawsrv -listen ${DRAWSRV_LISTEN} -static /usr/local/share/drawsrv/web -data /var/lib/drawsrv -max-canvas-mib ${DRAWSRV_MAX_CANVAS_MIB} -cache-mib ${DRAWSRV_CACHE_MIB} -maintenance-delay ${DRAWSRV_MAINTENANCE_DELAY}
 UMask=0077
 Restart=on-failure
 RestartSec=3

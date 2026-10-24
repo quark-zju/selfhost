@@ -30,25 +30,54 @@ make test
 
 ## 部署到 Linux VPS
 
-在本地或 CI 构建，避免在小内存 VPS 安装前端依赖或执行打包：
+参考同仓库 picosrv / picomx，Makefile 提供账号、配置和 systemd 安装入口。为了避免小内存 VPS 执行前端打包，构建与安装分开：`make deploy` 只安装已有产物，不调用 Go 或 npm。
+
+在本地或 CI 生成部署包：
 
 ```sh
-npm --prefix web ci
-npm --prefix web run build
-mkdir -p bin
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o bin/drawsrv .
+make release                       # 默认 Linux amd64
+make release TARGET_ARCH=arm64     # ARM64 VPS
 ```
 
-ARM64 VPS 使用 `GOARCH=arm64`。将 `bin/drawsrv` 和整个 `web/dist/` 上传到 VPS，例如 `/opt/drawsrv/drawsrv` 和 `/opt/drawsrv/web/`。前端包含本地字体，不依赖默认字体 CDN。
+将 `dist/drawsrv-linux-amd64.tar.gz`（或 arm64 包）上传到 VPS。包内包含 Go 程序、全部静态文件、部署模板和 Makefile，VPS 只需 Git 2.36+、make、tar、sudo 和 Linux 账号/systemd 工具：
 
 ```sh
-/opt/drawsrv/drawsrv \
-  -listen 127.0.0.1:8080 \
-  -static /opt/drawsrv/web \
-  -data /var/lib/drawsrv
+tar -xzf drawsrv-linux-amd64.tar.gz
+cd drawsrv
+make deploy
+sudoedit /etc/drawsrv/drawsrv.env
+make enable                        # systemctl enable --now drawsrv.service
+make status
 ```
 
-参见 [systemd 示例](deploy/drawsrv.service)。先创建 `drawsrv` 系统用户，再安装服务文件；示例使用 `StateDirectory=drawsrv` 创建数据目录。程序文件和静态文件应由部署用户管理，对服务用户只读。
+`make deploy` 创建系统用户/组并安装文件、刷新 systemd，但不会自动启动或重启服务。配置文件已存在时保留原文件。以 root 身份安装时可设置 `SUDO=`。
+
+默认安装位置：
+
+| 内容          | 路径                                           |
+| ------------- | ---------------------------------------------- |
+| 程序          | `/usr/local/bin/drawsrv`                       |
+| 静态页面      | `/usr/local/share/drawsrv/web/`                |
+| 配置          | `/etc/drawsrv/drawsrv.env`                     |
+| systemd unit  | `/etc/systemd/system/drawsrv.service`          |
+| bare Git 数据 | `/var/lib/drawsrv/`，由 systemd 创建并限制权限 |
+
+配置示例见 [drawsrv.env.example](deploy/drawsrv.env.example)，支持调整监听地址、画布上限、缓存预算、maintenance 延迟及 Go 软内存目标。修改配置后运行 `make restart`。
+
+升级时在新的部署包目录执行 `make deploy && make restart`。程序经临时文件原子替换；静态资源先复制，最后原子发布 `index.html`，保留旧的哈希资源以便已打开的页面继续使用。数据仓库和已有 `.env` 配置不被覆盖；unit 会从模板重新安装，systemd 个性化配置请放在 drop-in 中。旧静态资源不自动删除，可在停服后按需清理，避免长期多次部署占用磁盘。
+
+可单独执行 `make install`、`make setup-user`、`make install-config`、`make install-systemd`。通过 `PREFIX`、`SHARE_DIR`、`CONFIG_DIR`、`SYSTEMD_DIR`、`SERVICE_USER`、`SERVICE_GROUP` 覆盖安装位置和账号，生成的 unit 使用相应运行路径。`DESTDIR` 用于离线打包/暂存安装，不进入 unit 内的运行路径，也不会调用 systemctl。
+
+```sh
+make help
+make test-deploy                   # 无需 root/systemd，验证暂存安装、升级与配置保留
+```
+
+直接运行仍然可用：
+
+```sh
+./bin/drawsrv -static ./web/dist -data ./data -listen 127.0.0.1:8080
+```
 
 反代将整个站点（包括 `/api/`）转发到 `http://127.0.0.1:8080` 并启用身份认证。保留原始 `Host`，不要缓存 API、移除 `ETag`/`If-Match` 或转换 API JSON 响应。将反代请求体上限设置为至少 16 MiB；根路径部署，不支持 URL 子路径。服务本身不区分用户，所有获准访问者都能读写所有画布。
 
