@@ -176,3 +176,15 @@ time {
   border-bottom: 1px solid #e5e3ef;
   font-size: 14px;
 }
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin: 28px 0;
+}
+.pagination span {
+  color: #777589;
+  font-size: 14px;
+}

@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 )
@@ -252,12 +251,7 @@ func (s *store) list(w http.ResponseWriter, r *http.Request) {
 			items = append(items, item{id, meta.Name, meta.Updated})
 		}
 	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Updated.Equal(items[j].Updated) {
-			return items[i].ID < items[j].ID
-		}
-		return items[i].Updated.After(items[j].Updated)
-	})
+
 	json.NewEncoder(w).Encode(items)
 }
 

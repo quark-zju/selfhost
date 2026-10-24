@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import {
@@ -33,6 +33,7 @@ import { LocalAppStateStore } from "./localAppState";
 import { normalizeElements, normalizeLibraryItems } from "./normalize";
 import { serializeCanvas, diffCanvas, effectiveHash } from "./content";
 import { reuseRemoteElements, hasChangedExistingFiles } from "./remoteScene";
+import { paginateCanvases } from "./canvasList";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : "请求失败";
@@ -43,6 +44,11 @@ function Gallery() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const visible = useMemo(
+    () => paginateCanvases(canvases ?? [], query, page),
+    [canvases, query, page],
+  );
   const load = () => {
     setError("");
     void fetch("/api/canvases", { cache: "no-store" })
@@ -97,33 +103,56 @@ function Gallery() {
         </p>
       )}
       <div className="list-heading">
-        <h2>{canvases ? `${canvases.length} 个画布` : "正在加载…"}</h2>
+        <div>
+          <h2>{canvases ? `${visible.total} 个画布` : "正在加载…"}</h2>
+          <span className="muted">最近更新优先 · 每页 20 项</span>
+        </div>
         <input
           aria-label="搜索画布"
           placeholder="搜索画布"
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setPage(1);
+          }}
         />
       </div>
       <div className="cards">
-        {canvases
-          ?.filter((canvas) =>
-            canvas.name.toLowerCase().includes(query.toLowerCase()),
-          )
-          .map((canvas) => (
-            <a className="card" key={canvas.id} href={`/?canvas=${canvas.id}`}>
-              <span className="card-icon" aria-hidden>
-                ▱
-              </span>
-              <strong>{canvas.name}</strong>
-              <time>{new Date(canvas.updated).toLocaleString()}</time>
-            </a>
-          ))}
+        {visible.items.map((canvas) => (
+          <a className="card" key={canvas.id} href={`/?canvas=${canvas.id}`}>
+            <span className="card-icon" aria-hidden>
+              ▱
+            </span>
+            <strong>{canvas.name}</strong>
+            <time>{new Date(canvas.updated).toLocaleString()}</time>
+          </a>
+        ))}
       </div>
-      {canvases?.length === 0 && (
+      {canvases && visible.total === 0 && (
         <p className="empty">
-          创建第一个画布，或创建后导入已有的 .excalidraw 文件。
+          {query.trim()
+            ? "没有找到匹配的画布。"
+            : "创建第一个画布，或创建后导入已有的 .excalidraw 文件。"}
         </p>
+      )}
+      {visible.pages > 1 && (
+        <nav className="pagination" aria-label="画布分页">
+          <button
+            disabled={visible.page <= 1}
+            onClick={() => setPage(visible.page - 1)}
+          >
+            上一页
+          </button>
+          <span role="status" aria-live="polite">
+            第 {visible.page} / {visible.pages} 页
+          </span>
+          <button
+            disabled={visible.page >= visible.pages}
+            onClick={() => setPage(visible.page + 1)}
+          >
+            下一页
+          </button>
+        </nav>
       )}
     </main>
   );
