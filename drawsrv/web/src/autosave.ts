@@ -30,7 +30,9 @@ export class SaveError extends Error {
 }
 type Mode = "auto" | "sync" | "persist";
 
-// Coalesce same-turn edits and edits during a request, without a fixed wait.
+export const UPLOAD_INTERVAL_MS = 200;
+
+// Coalesce continuous edits within a non-restarting upload window.
 // Uploads and explicit disk flushes share one queue and one version sequence.
 export class Autosave {
   private pending: string | null = null;
@@ -67,7 +69,7 @@ export class Autosave {
     etag: string,
     send: (body: string, etag: string, baseline: string) => Promise<SaveResult>,
     notify: (state: SaveState) => void,
-    delay = 0,
+    delay = UPLOAD_INTERVAL_MS,
     disk?: {
       persisted: boolean;
       revision?: string;
@@ -142,8 +144,10 @@ export class Autosave {
       this.log("等待当前保存完成后比较 HASH");
       return;
     }
-    this.log(this.dirty ? "本地有修改，先尝试保存" : "本地无修改，比较 HASH");
-    await this.run("sync");
+    this.log(
+      this.dirty ? "本地有修改，按上传节流先保存" : "本地无修改，比较 HASH",
+    );
+    await this.run("auto");
   }
   async resumeRemote() {
     if (
@@ -156,7 +160,7 @@ export class Autosave {
     )
       return;
     this.refreshDeferred = false;
-    await this.run("sync");
+    await this.run("auto");
   }
   private async reconcile() {
     if (
@@ -331,7 +335,7 @@ export class Autosave {
       !this.refreshDeferred &&
       !this.disposed
     )
-      return this.run("sync");
+      return this.run(mode);
     // A one-shot SSE event may have arrived while the HTTP ACK was in flight.
     if (
       this.observedDurable === this.revisionID &&

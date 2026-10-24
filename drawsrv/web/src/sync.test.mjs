@@ -24,7 +24,7 @@ const deferred = () => {
 async function setup(t, send, options = {}) {
   const refreshes = [],
     logs = [];
-  const save = new Autosave(body(), "etag-1", send, () => {}, 2000, {
+  const save = new Autosave(body(), "etag-1", send, () => {}, 200, {
     hash: await hash(body()),
     revision: "epoch-1",
     persisted: true,
@@ -62,6 +62,7 @@ test("SSE with different content refreshes a clean client", async (t) => {
   assert.equal(refreshes.length, 1);
 });
 test("dirty SSE first applies local changes, then compares acknowledged content", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const sends = [];
   const { save, refreshes } = await setup(t, async (value, etag, baseline) => {
     sends.push({ value, baseline });
@@ -69,6 +70,10 @@ test("dirty SSE first applies local changes, then compares acknowledged content"
   });
   save.queue(body("local"));
   await save.observeRemote(await state(body("remote"), 2));
+  assert.equal(sends.length, 0);
+  assert.equal(refreshes.length, 0);
+  t.mock.timers.tick(200);
+  await save.sync();
   assert.equal(sends.length, 1);
   assert.equal(sends[0].baseline, body());
   assert.equal(save.dirty, false);
@@ -198,6 +203,8 @@ test("snapshot fetch does not overwrite edits that arrive while it is in flight"
   });
   await pending;
   assert.equal(applied, 0);
+  assert.equal(save.dirty, true);
+  await save.sync();
   assert.equal(save.dirty, false);
 });
 test("adopted snapshot becomes the next conditional-save baseline", async (t) => {
@@ -328,4 +335,40 @@ test("invalid snapshot hashes block adoption and keep subsequent local edits dir
   save.queue(body("local after failure"));
   assert.equal(save.dirty, true);
   assert.equal(await save.sync(), false);
+});
+
+test("edits arriving during an automatic hash comparison keep their throttle window", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const comparing = deferred(),
+    release = deferred(),
+    calls = [];
+  let comparisons = 0;
+  const { save, refreshes } = await setup(
+    t,
+    async (value) => {
+      calls.push(value);
+      return state(value, 3, { applied: [0], dropped: [] });
+    },
+    {
+      hashBody: async (value) => {
+        if (++comparisons === 1) {
+          comparing.resolve();
+          await release.promise;
+        }
+        return hash(value);
+      },
+    },
+  );
+  const event = save.observeRemote(await state(body("remote"), 2));
+  await comparing.promise;
+  save.queue(body("local"));
+  release.resolve();
+  await event;
+  assert.equal(calls.length, 0);
+  assert.equal(refreshes.length, 0);
+  t.mock.timers.tick(199);
+  assert.equal(calls.length, 0);
+  t.mock.timers.tick(1);
+  await save.sync();
+  assert.deepEqual(calls, [body("local")]);
 });

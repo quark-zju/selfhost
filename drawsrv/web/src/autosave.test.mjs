@@ -510,7 +510,7 @@ test("a one-shot event during completion updates durability after the request se
   save.dispose();
 });
 
-test("default upload has no fixed delay and coalesces edits while a request is in flight", async (t) => {
+test("an explicitly configured zero-delay upload has no fixed wait and coalesces edits while a request is in flight", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const first = deferred(),
     calls = [];
@@ -527,6 +527,7 @@ test("default upload has no fixed delay and coalesces edits while a request is i
       };
     },
     () => {},
+    0,
   );
   t.after(() => save.dispose());
   save.queue("one");
@@ -542,4 +543,142 @@ test("default upload has no fixed delay and coalesces edits while a request is i
   await new Promise(setImmediate);
   assert.deepEqual(calls, ["two", "four"]);
   assert.equal(save.dirty, false);
+});
+
+test("default throttle sends at most five automatic batches per second during continuous edits", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const calls = [];
+  const save = new Autosave(
+    "initial",
+    "v0",
+    async (body) => {
+      calls.push(body);
+      return {
+        etag: `v${calls.length}`,
+        revision: `epoch-${calls.length}`,
+        persisted: true,
+      };
+    },
+    () => {},
+  );
+  t.after(() => save.dispose());
+  save.queue("edit-0");
+  for (let i = 1; i <= 100; i++) {
+    t.mock.timers.tick(10);
+    save.queue(`edit-${i}`);
+    await new Promise(setImmediate);
+  }
+  assert.deepEqual(calls, [
+    "edit-19",
+    "edit-39",
+    "edit-59",
+    "edit-79",
+    "edit-99",
+  ]);
+  t.mock.timers.tick(200);
+  await new Promise(setImmediate);
+  assert.equal(calls.at(-1), "edit-100");
+  assert.equal(save.dirty, false);
+});
+test("SSE cannot bypass a pending automatic upload window", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const calls = [];
+  const save = new Autosave(
+    "initial",
+    "v0",
+    async (body) => {
+      calls.push(body);
+      return {
+        etag: `v${calls.length}`,
+        revision: `epoch-${calls.length * 2}`,
+        hash: "a".repeat(64),
+        persisted: true,
+      };
+    },
+    () => {},
+  );
+  t.after(() => save.dispose());
+  save.queue("one");
+  await save.observeRemote({
+    etag: "remote",
+    revision: "epoch-1",
+    hash: "b".repeat(64),
+    persisted: true,
+  });
+  assert.equal(calls.length, 0);
+  t.mock.timers.tick(200);
+  await new Promise(setImmediate);
+  assert.deepEqual(calls, ["one"]);
+  save.queue("two");
+  t.mock.timers.tick(50);
+  await save.observeRemote({
+    etag: "remote-next",
+    revision: "epoch-3",
+    hash: "c".repeat(64),
+    persisted: true,
+  });
+  assert.deepEqual(calls, ["one"]);
+  t.mock.timers.tick(149);
+  assert.equal(calls.length, 1);
+  t.mock.timers.tick(1);
+  await new Promise(setImmediate);
+  assert.deepEqual(calls, ["one", "two"]);
+});
+test("slow requests retain only the latest pending edit and never overlap uploads", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const first = deferred(),
+    calls = [];
+  let active = 0,
+    peak = 0;
+  const save = new Autosave(
+    "initial",
+    "v0",
+    async (body) => {
+      active++;
+      peak = Math.max(peak, active);
+      calls.push(body);
+      if (calls.length === 1) await first.promise;
+      active--;
+      return {
+        etag: `v${calls.length}`,
+        revision: `epoch-${calls.length}`,
+        persisted: true,
+      };
+    },
+    () => {},
+  );
+  t.after(() => save.dispose());
+  save.queue("one");
+  t.mock.timers.tick(200);
+  assert.deepEqual(calls, ["one"]);
+  for (let i = 0; i < 20; i++) {
+    save.queue(`pending-${i}`);
+    t.mock.timers.tick(50);
+  }
+  assert.deepEqual(calls, ["one"]);
+  first.resolve();
+  await new Promise(setImmediate);
+  assert.deepEqual(calls, ["one", "pending-19"]);
+  assert.equal(peak, 1);
+  assert.equal(save.dirty, false);
+});
+test("manual save bypasses the upload throttle without leaving a duplicate timer", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const calls = [];
+  const save = new Autosave(
+    "initial",
+    "v0",
+    async (body) => {
+      calls.push(body);
+      return { etag: "v1", revision: "epoch-1", persisted: true };
+    },
+    () => {},
+  );
+  t.after(() => save.dispose());
+  save.queue("edit");
+  assert.equal(await save.flush(), true);
+  assert.deepEqual(calls, ["edit"]);
+  t.mock.timers.tick(1000);
+  await new Promise(setImmediate);
+  assert.deepEqual(calls, ["edit"]);
 });

@@ -13,7 +13,12 @@ import type {
   ExcalidrawProps,
   LibraryItems,
 } from "@excalidraw/excalidraw/types";
-import { Autosave, SaveError, type SaveState } from "./autosave";
+import {
+  Autosave,
+  SaveError,
+  UPLOAD_INTERVAL_MS,
+  type SaveState,
+} from "./autosave";
 import {
   canvasURL,
   checked,
@@ -209,7 +214,7 @@ function Editor({
           return { ...state, applied: result.applied, dropped: result.dropped };
         },
         logSaveState,
-        0,
+        UPLOAD_INTERVAL_MS,
         {
           persisted: loaded.persisted,
           revision: loaded.revision,
