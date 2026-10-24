@@ -57,6 +57,9 @@ func (s *store) maintain(ctx context.Context, delay time.Duration, now time.Time
 		return maintenanceFailureRetry, false, err
 	}
 	head, err := s.runGit(ctx, 20*time.Second, nil, "rev-parse", "--verify", "HEAD^{commit}")
+	if ctx.Err() != nil {
+		return 0, false, ctx.Err()
+	}
 	if err != nil || strings.TrimSpace(string(head)) != s.head {
 		s.failed = true
 		return 0, false, errors.New("cannot verify HEAD after maintenance; restart required")

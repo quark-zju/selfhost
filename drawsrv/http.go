@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -50,7 +51,7 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 		id = parts[1]
 		if len(parts) == 3 {
 			action = parts[2]
-			if action != "history" && action != "restore" {
+			if action != "history" && action != "restore" && action != "flush" && action != "status" {
 				http.NotFound(w, r)
 				return
 			}
@@ -59,9 +60,9 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 	allowed := "GET, PUT"
 	if collection {
 		allowed = "GET, POST"
-	} else if action == "history" {
+	} else if action == "history" || action == "status" {
 		allowed = "GET"
-	} else if action == "restore" {
+	} else if action == "restore" || action == "flush" {
 		allowed = "POST"
 	}
 	if !strings.Contains(", "+allowed+",", ", "+r.Method+",") {
@@ -116,12 +117,27 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("ETag", revision(current))
+	w.Header().Set("X-Drawsrv-Persisted", fmt.Sprint(s.pending[id] == nil))
+	if action == "status" {
+		json.NewEncoder(w).Encode(map[string]bool{"persisted": s.pending[id] == nil})
+		return
+	}
 	if r.Method == "GET" {
 		w.Write(current)
 		return
 	}
 	if r.Header.Get("If-Match") != revision(current) {
 		http.Error(w, "canvas changed; export your changes then reload", 412)
+		return
+	}
+	if action == "flush" {
+		if err := s.flushPending(id); err != nil {
+			log.Print(err)
+			http.Error(w, "cannot persist canvas", 500)
+			return
+		}
+		w.Header().Set("X-Drawsrv-Persisted", "true")
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	var body []byte
@@ -165,17 +181,28 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "formatted canvas exceeds size limit", 413)
 		return
 	}
-	message := "canvas: save"
+	persisted := false
 	if action == "restore" {
-		message = "canvas: restore"
+		// Preserve the acknowledged draft in history before replacing it.
+		if err = s.flushPending(id); err == nil {
+			err = s.save(id, body, current, "canvas: restore")
+		}
+		persisted = true
+	} else {
+		persisted, err = s.stage(id, body, current, state.Name, time.Now())
 	}
-	if err := s.save(id, body, current, message); err != nil {
+	if err != nil {
 		log.Print(err)
-		http.Error(w, "cannot commit canvas", 500)
+		http.Error(w, "cannot save canvas", 500)
 		return
 	}
 	w.Header().Set("ETag", revision(body))
-	w.WriteHeader(204)
+	w.Header().Set("X-Drawsrv-Persisted", fmt.Sprint(persisted))
+	if persisted {
+		w.WriteHeader(http.StatusNoContent)
+	} else {
+		w.WriteHeader(http.StatusAccepted)
+	}
 }
 
 func (s *store) list(w http.ResponseWriter, r *http.Request) {
@@ -186,7 +213,11 @@ func (s *store) list(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]item, 0, len(s.state.Canvases))
 	for id, meta := range s.state.Canvases {
-		items = append(items, item{id, meta.Name, meta.Updated})
+		if draft := s.pending[id]; draft != nil {
+			items = append(items, item{id, draft.name, draft.updated})
+		} else {
+			items = append(items, item{id, meta.Name, meta.Updated})
+		}
 	}
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Updated.Equal(items[j].Updated) {

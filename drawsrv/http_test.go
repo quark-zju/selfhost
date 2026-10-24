@@ -17,6 +17,9 @@ func testStore(t *testing.T) *store {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Exercise the synchronous Git API in legacy storage tests; buffering has
+	// its own tests with the production delay enabled.
+	s.commitDelay = 0
 	t.Cleanup(func() { s.Close() })
 	return s
 }
@@ -151,6 +154,7 @@ func TestFailedGitPublicationLeavesHEADUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restarted.Close()
+	restarted.commitDelay = 0
 	w = request(restarted, "GET", "/api/canvases/"+id, "", "")
 	if w.Code != 200 || w.Body.String() != original {
 		t.Fatal("restart did not recover last published canvas")
@@ -199,6 +203,7 @@ func TestUnpublishedObjectsAreIgnoredAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restarted.Close()
+	restarted.commitDelay = 0
 	if restarted.head != head {
 		t.Fatal("unpublished objects changed HEAD")
 	}

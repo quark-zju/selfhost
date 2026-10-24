@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -22,13 +23,15 @@ func main() {
 	}
 }
 
-func run() error {
+func run() (result error) {
 	addr := flag.String("listen", "127.0.0.1:8080", "HTTP listen address")
 	static := flag.String("static", "web/dist", "built frontend directory")
 	data := flag.String("data", "data", "private Git data directory, outside static directory")
 	limit := flag.Int64("max-canvas-mib", 16, "maximum canvas size including base64 images")
 	cacheMiB := flag.Int("cache-mib", 4, "maximum cached canvas payload MiB (0 disables; at most 64 entries)")
 	maintenanceDelay := flag.Duration("maintenance-delay", defaultMaintenanceDelay, "delay from first Git write to foreground GC (0 disables)")
+	commitDelay := flag.Duration("commit-delay", defaultCommitDelay, "idle time before a canvas snapshot is committed to Git (0 saves immediately)")
+	pendingMiB := flag.Int("pending-mib", 16, "total pending snapshot payload MiB (0 saves immediately; at most 64 canvases)")
 	flag.Parse()
 	if *limit < 1 || *limit > 256 {
 		return errors.New("max-canvas-mib must be 1..256")
@@ -38,6 +41,12 @@ func run() error {
 	}
 	if *maintenanceDelay < 0 {
 		return errors.New("maintenance-delay must not be negative")
+	}
+	if *commitDelay < 0 {
+		return errors.New("commit-delay must not be negative")
+	}
+	if *pendingMiB < 0 || *pendingMiB > 256 {
+		return errors.New("pending-mib must be 0..256")
 	}
 	if err := os.MkdirAll(*data, 0700); err != nil {
 		return err
@@ -69,7 +78,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer s.Close()
+	defer func() { result = errors.Join(result, s.Close()) }()
+	s.commitDelay = *commitDelay
+	s.pendingBudget = *pendingMiB << 20
 	s.cache = newBlobCache(*cacheMiB << 20)
 	staticRoot, err := os.OpenRoot(staticPath)
 	if err != nil {
@@ -85,7 +96,14 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	done := make(chan struct{})
-	go func() { defer close(done); s.runMaintenance(ctx, *maintenanceDelay, log.Printf) }()
+	go func() {
+		defer close(done)
+		var workers sync.WaitGroup
+		workers.Add(2)
+		go func() { defer workers.Done(); s.runMaintenance(ctx, *maintenanceDelay, log.Printf) }()
+		go func() { defer workers.Done(); s.runPersistence(ctx, log.Printf) }()
+		workers.Wait()
+	}()
 	defer func() { stop(); <-done }()
 	serverErrors := make(chan error, 1)
 	go func() { serverErrors <- server.ListenAndServe() }()

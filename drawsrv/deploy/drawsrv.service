@@ -12,13 +12,16 @@ WorkingDirectory=/usr/local/share/drawsrv
 Environment=DRAWSRV_LISTEN=127.0.0.1:8080
 Environment=DRAWSRV_MAX_CANVAS_MIB=16
 Environment=DRAWSRV_CACHE_MIB=4
+Environment=DRAWSRV_PENDING_MIB=16
+Environment=DRAWSRV_COMMIT_DELAY=30s
 Environment=DRAWSRV_MAINTENANCE_DELAY=10m
 Environment=GOMEMLIMIT=64MiB
 EnvironmentFile=-/etc/drawsrv/drawsrv.env
-ExecStart=/usr/local/bin/drawsrv -listen ${DRAWSRV_LISTEN} -static /usr/local/share/drawsrv/web -data /var/lib/drawsrv -max-canvas-mib ${DRAWSRV_MAX_CANVAS_MIB} -cache-mib ${DRAWSRV_CACHE_MIB} -maintenance-delay ${DRAWSRV_MAINTENANCE_DELAY}
+ExecStart=/usr/local/bin/drawsrv -listen ${DRAWSRV_LISTEN} -static /usr/local/share/drawsrv/web -data /var/lib/drawsrv -max-canvas-mib ${DRAWSRV_MAX_CANVAS_MIB} -cache-mib ${DRAWSRV_CACHE_MIB} -maintenance-delay ${DRAWSRV_MAINTENANCE_DELAY} -pending-mib ${DRAWSRV_PENDING_MIB} -commit-delay ${DRAWSRV_COMMIT_DELAY}
 UMask=0077
 Restart=on-failure
 RestartSec=3
+TimeoutStopSec=180
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

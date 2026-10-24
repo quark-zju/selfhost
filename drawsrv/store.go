@@ -54,6 +54,11 @@ type store struct {
 	dirtySince          time.Time
 	retryAfter          time.Time
 	maintenanceRequests chan time.Time
+	pending             map[string]*pendingCanvas
+	pendingBytes        int
+	pendingBudget       int
+	commitDelay         time.Duration
+	pendingRequests     chan struct{}
 }
 
 var canvasID = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -111,9 +116,10 @@ func (s *store) Close() error {
 	if s.lock == nil {
 		return nil
 	}
+	flushErr := s.flushAll()
 	err := s.lock.Close()
 	s.lock = nil
-	return err
+	return errors.Join(flushErr, err)
 }
 
 func openStore(dir string, limit int64) (result *store, err error) {
@@ -141,7 +147,7 @@ func openStore(dir string, limit int64) (result *store, err error) {
 			}
 		}
 	}
-	s := &store{dir: dir, limit: limit, cache: newBlobCache(defaultCacheBytes), maintenanceRequests: make(chan time.Time, 1)}
+	s := &store{dir: dir, limit: limit, cache: newBlobCache(defaultCacheBytes), maintenanceRequests: make(chan time.Time, 1), pending: make(map[string]*pendingCanvas), pendingBudget: defaultPendingBytes, commitDelay: defaultCommitDelay, pendingRequests: make(chan struct{}, 1)}
 	s.lock, err = os.OpenFile(filepath.Join(dir, "drawsrv.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
@@ -305,6 +311,12 @@ func decodeSnapshot(body []byte) (*snapshot, error) {
 }
 
 func (s *store) read(id string) ([]byte, error) {
+	if entry := s.pending[id]; entry != nil {
+		return entry.body, nil
+	}
+	return s.readCommitted(id)
+}
+func (s *store) readCommitted(id string) ([]byte, error) {
 	meta, ok := s.state.Canvases[id]
 	if !ok {
 		return nil, errCanvasNotFound
@@ -343,6 +355,9 @@ func (s *store) writeBlob(body []byte) (string, error) {
 }
 
 func (s *store) save(id string, body, previous []byte, message string) error {
+	return s.saveAt(id, body, previous, message, time.Now().UTC())
+}
+func (s *store) saveAt(id string, body, previous []byte, message string, updated time.Time) error {
 	if bytes.Equal(body, previous) {
 		return nil
 	}
@@ -358,7 +373,7 @@ func (s *store) save(id string, body, previous []byte, message string) error {
 	for key, meta := range s.state.Canvases {
 		next.Canvases[key] = meta
 	}
-	next.Canvases[id] = canvasMetadata{Name: state.Name, Updated: time.Now().UTC(), Blob: blob}
+	next.Canvases[id] = canvasMetadata{Name: state.Name, Updated: updated.UTC(), Blob: blob}
 	if err := s.publish(next, message+" "+id); err != nil {
 		return err
 	}
