@@ -1,0 +1,204 @@
+// 示例：复制到 internal/config/custom_local.go。
+// 该文件通过注册 evaluator 工厂覆盖默认策略，实现本机私有策略。
+//
+// 这是含凭证的可信管理员配置，不要提交到版本控制。LLM gateway 会代客户端
+// 注入真实 API key，且不提供自身认证；仅应把对应域名暴露给可信内网客户端。
+
+package config
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+)
+
+type hostConfig struct {
+	Upstream   string
+	RootDir    string
+	NeedKnock  bool
+	LLMGateway bool
+	BasicAuth  *basicAuthConfig
+}
+
+type basicAuthConfig struct {
+	User     string
+	Password Password
+}
+
+func basicAuth(user string, password Password) *basicAuthConfig {
+	return &basicAuthConfig{User: user, Password: password}
+}
+
+var hostConfigs = map[string]hostConfig{
+	"app.example.com":    {Upstream: "http://127.0.0.1:8081", NeedKnock: true},
+	"public.example.com": {Upstream: "http://127.0.0.1:8082"},
+	// Replace both Basic Auth placeholders before enabling this host.
+	"basic.example.com":   {Upstream: "http://127.0.0.1:8083", BasicAuth: basicAuth("replace-user", PlainPassword("replace-password"))},
+	"files.example.com":   {RootDir: "/srv/files.example.com"},
+	"llm-lan.example.com": {LLMGateway: true},
+}
+
+var knownBadPaths = map[string]struct{}{
+	"/.aws/credentials": {},
+	"/.env":             {},
+	"/.env.production":  {},
+}
+
+const (
+	openAIUpstream   = "https://api.openai.com"
+	deepSeekUpstream = "https://api.deepseek.com"
+	miniMaxUpstream  = "https://api.minimax.io"
+	maxLLMBodyBytes  = 16 << 20
+
+	openAIAPIKey   = "sk-openai-placeholder"
+	deepSeekAPIKey = "sk-deepseek-placeholder"
+	miniMaxAPIKey  = "sk-minimax-placeholder"
+
+	// Replace this placeholder with a path that the service can write and the
+	// administrator can inspect. If the file exists, LLM request bodies are
+	// appended to it for debugging; leave it absent during normal use. With the
+	// packaged PrivateTmp=yes unit, do not expect the service's /tmp to match the
+	// host's /tmp.
+	llmCaptureFlagFile = "/path/to/picosrv-llm-capture.jsonl"
+)
+
+func init() {
+	SetEvaluatorFactory(func() Evaluator {
+		return customEvaluator{}
+	})
+}
+
+type customEvaluator struct{}
+
+func (customEvaluator) IsKnownHost(host string) bool {
+	_, ok := hostConfigs[host]
+	return ok
+}
+
+func (customEvaluator) Evaluate(req EvaluationRequest) Decision {
+	ctx := req.Context
+	r := req.HTTP
+	cfg, ok := hostConfigs[ctx.Host]
+	if !ok {
+		return Decision{Kind: DecisionDeny, Reason: "unknown_host"}
+	}
+	if _, bad := knownBadPaths[ctx.Path]; bad {
+		// The stricter fail2ban rule (picosrv-likely-abuse.conf) matches
+		// likely_abuse and bans a source after a single candidate request.
+		return Decision{Kind: DecisionDeny, Reason: "likely_abuse"}
+	}
+
+	if cfg.BasicAuth != nil && !req.Auth.ConsumeBasicAuth(cfg.BasicAuth.User, cfg.BasicAuth.Password) {
+		return Decision{Kind: DecisionRequireBasicAuth, Realm: ctx.Host, Reason: "basic_auth"}
+	}
+
+	if cfg.LLMGateway {
+		return allowLLMGateway(r)
+	}
+
+	// Knock always works.
+	if ctx.Path == "/knock" {
+		return Decision{Kind: DecisionIssueCookieAndRedirect, RedirectPath: "/", SetCookie: true, Reason: "knock"}
+	}
+
+	if cfg.NeedKnock {
+		if req.Auth.HasValidCookie() {
+			return allowHost(cfg, "cookie")
+		}
+		// Uncomment to allow specific paths or UAs to bypass knock:
+		// if isNoKnockPath(ctx.Path) || isNoKnockUA(ctx.UA) {
+		// 	return allowHost(cfg, "no_knock_bypass")
+		// }
+		return Decision{Kind: DecisionDeny, Reason: "policy"}
+	}
+
+	return allowHost(cfg, "public_host")
+}
+
+func allowHost(cfg hostConfig, reason string) Decision {
+	if cfg.RootDir != "" {
+		return Decision{Kind: DecisionAllowFiles, RootDir: cfg.RootDir, Reason: reason}
+	}
+	return Decision{Kind: DecisionAllowProxy, Upstream: cfg.Upstream, Reason: reason}
+}
+
+func allowLLMGateway(r *http.Request) Decision {
+	body, err := readAndRestoreBody(r)
+	if err != nil {
+		return Decision{Kind: DecisionDeny, Reason: "read_body_failed"}
+	}
+	captureLLMBody(body)
+
+	upstream, apiKey := llmUpstreamForModel(llmModel(body))
+	if upstream == "" {
+		return Decision{Kind: DecisionDeny, Reason: "unknown_llm_model"}
+	}
+
+	r.Header.Set("Authorization", "Bearer "+apiKey)
+	return Decision{Kind: DecisionAllowExternalProxy, Upstream: upstream, Reason: "llm_gateway"}
+}
+
+func readAndRestoreBody(r *http.Request) ([]byte, error) {
+	if r.Body == nil {
+		return nil, nil
+	}
+	// Unlike the normal streaming reverse-proxy path, model routing needs the
+	// complete JSON body in memory, so keep this example explicitly bounded.
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxLLMBodyBytes+1))
+	if closeErr := r.Body.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil && len(body) > maxLLMBodyBytes {
+		err = fmt.Errorf("LLM request body exceeds %d bytes", maxLLMBodyBytes)
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	return body, err
+}
+
+func captureLLMBody(body []byte) {
+	if len(body) == 0 {
+		return
+	}
+	if _, err := os.Stat(llmCaptureFlagFile); err != nil {
+		return
+	}
+	f, err := os.OpenFile(llmCaptureFlagFile, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.Write(append(body, '\n'))
+}
+
+func llmModel(body []byte) string {
+	var payload struct {
+		Model string `json:"model"`
+	}
+	_ = json.Unmarshal(body, &payload)
+	return strings.ToLower(payload.Model)
+}
+
+func llmUpstreamForModel(model string) (string, string) {
+	switch {
+	case strings.HasPrefix(model, "gpt"):
+		return openAIUpstream, openAIAPIKey
+	case strings.HasPrefix(model, "deepseek"):
+		return deepSeekUpstream, deepSeekAPIKey
+	case strings.HasPrefix(model, "minimax"):
+		return miniMaxUpstream, miniMaxAPIKey
+	default:
+		return "", ""
+	}
+}
+
+// Uncomment to enable bypass helpers.
+// func isNoKnockPath(path string) bool {
+// 	return strings.HasPrefix(path, "/public") || strings.HasPrefix(path, "/.well-known/acme-challenge")
+// }
+// func isNoKnockUA(ua string) bool {
+// 	return strings.HasPrefix(strings.ToLower(ua), "healthcheck")
+// }

@@ -1,0 +1,60 @@
+[Unit]
+Description=picosrv reverse proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=picosrv
+Group=picosrv
+ExecStart=/usr/local/bin/picosrv \
+  --cert-dir /etc/picosrv/certs \
+  --http2 \
+  --tls-reload-interval 30s
+EnvironmentFile=/etc/picosrv/picosrv.env
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateIPC=yes
+PrivateUsers=yes
+PrivatePIDs=yes
+RemoveIPC=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
+ProcSubset=pid
+DeviceAllow=
+UMask=0077
+
+NoNewPrivileges=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+ReadOnlyPaths=/etc/picosrv/certs
+
+# picosrv receives sockets from systemd and proxies to configured TCP
+# upstreams, so AF_INET/AF_INET6, host networking, and the host root remain
+# intentional. Deny privileged/resource-control syscalls on top of the
+# system-service allow list; these are not needed by the reverse proxy path.
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
