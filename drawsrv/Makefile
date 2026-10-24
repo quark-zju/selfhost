@@ -105,7 +105,6 @@ install-systemd:
 		-e 's|^Group=drawsrv$$|Group=$(SERVICE_GROUP)|' \
 		-e 's|/usr/local/bin/drawsrv|$(INSTALL_PATH)|g' \
 		-e 's|/usr/local/share/drawsrv/web|$(WEB_DIR)|g' \
-		-e 's|^WorkingDirectory=/usr/local/share/drawsrv$$|WorkingDirectory=$(SHARE_DIR)|' \
 		-e 's|/etc/drawsrv/drawsrv.env|$(ENV_FILE)|g' \
 		deploy/drawsrv.service > "$$unit"; \
 	$(SUDO) install -d -m 755 "$(DESTDIR)$(SYSTEMD_DIR)"; \

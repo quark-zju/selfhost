@@ -8,7 +8,7 @@ User=drawsrv
 Group=drawsrv
 StateDirectory=drawsrv
 StateDirectoryMode=0700
-WorkingDirectory=/usr/local/share/drawsrv
+WorkingDirectory=/var/lib/drawsrv
 Environment=DRAWSRV_LISTEN=127.0.0.1:8080
 Environment=DRAWSRV_MAX_CANVAS_MIB=16
 Environment=DRAWSRV_CACHE_MIB=4

@@ -64,6 +64,8 @@ make status
 | systemd unit  | `/etc/systemd/system/drawsrv.service`          |
 | bare Git 数据 | `/var/lib/drawsrv/`，由 systemd 创建并限制权限 |
 
+与 picomx 一样，systemd 通过 `StateDirectory=drawsrv` 创建 `/var/lib/drawsrv`（0700）；服务工作目录也设为此处，`-data` 使用明确的绝对路径。`/usr/local/share/drawsrv/web` 继续仅存放静态页面。开发时手动指定的 `-data ./data` 不影响部署默认目录。
+
 配置示例见 [drawsrv.env.example](deploy/drawsrv.env.example)，支持调整监听地址、画布上限、读取缓存/待落盘缓冲预算、Git 提交空闲时间、maintenance 延迟及 Go 软内存目标。修改配置后运行 `make restart`。
 
 升级时在新的部署包目录执行 `make deploy && make restart`。程序经临时文件原子替换；静态资源先复制，最后原子发布 `index.html`，保留旧的哈希资源以便已打开的页面继续使用。数据仓库和已有 `.env` 配置不被覆盖；unit 会从模板重新安装，systemd 个性化配置请放在 drop-in 中。旧静态资源不自动删除，可在停服后按需清理，避免长期多次部署占用磁盘。
