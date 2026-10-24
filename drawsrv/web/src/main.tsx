@@ -14,7 +14,6 @@ import {
   saveResult,
   type Canvas,
   type CanvasItem,
-  type HistoryItem,
 } from "./api";
 import "@excalidraw/excalidraw/index.css";
 import "./style.css";
@@ -149,10 +148,6 @@ function Editor({
     }
   };
   const [remoteUpdate, setRemoteUpdate] = useState(false);
-  const [history, setHistory] = useState<HistoryItem[] | null>(null);
-  const [historyError, setHistoryError] = useState("");
-  const [restoring, setRestoring] = useState(false);
-  const [restoreTarget, setRestoreTarget] = useState<string | null>(null);
   const [save] = useState(
     () =>
       new Autosave(
@@ -198,7 +193,7 @@ function Editor({
 
   const queue = () => save.queue(JSON.stringify(current.current));
   const onChange: ExcalidrawProps["onChange"] = (elements, appState, files) => {
-    if (appState.isLoading || restoring) {
+    if (appState.isLoading) {
       return;
     }
     // The public serializer removes transient UI state and unused/deleted files.
@@ -343,20 +338,6 @@ function Editor({
     link.click();
     ownerWindow.setTimeout(() => ownerWindow.URL.revokeObjectURL(url), 1000);
   };
-  const showHistory = async () => {
-    setHistoryError("");
-    if (!(await save.flush())) {
-      return;
-    }
-    try {
-      const response = await checked(
-        await fetch(`${canvasURL(id)}/history`, { cache: "no-store" }),
-      );
-      setHistory(await response.json());
-    } catch (error) {
-      setHistoryError(message(error));
-    }
-  };
   return (
     <div className="workspace" ref={node}>
       <header className="editor-header">
@@ -385,7 +366,6 @@ function Editor({
         />
         <button onClick={() => void save.flush()}>保存 / 重试</button>
         <button onClick={exportBackup}>导出备份</button>
-        <button onClick={() => void showHistory()}>历史</button>
       </header>
       {remoteUpdate && (
         <div className="remote-update" role="status">
@@ -399,12 +379,7 @@ function Editor({
           </button>
         </div>
       )}
-      {historyError && (
-        <p className="error" role="alert">
-          {historyError}
-        </p>
-      )}
-      <div className="drawing" inert={restoring}>
+      <div className="drawing">
         <Excalidraw
           initialData={initialScene}
           excalidrawAPI={(instance) => {
@@ -425,77 +400,6 @@ function Editor({
           </MainMenu>
         </Excalidraw>
       </div>
-      {history && (
-        <aside className="history" aria-label="画布历史">
-          <div className="list-heading">
-            <h2>历史记录</h2>
-            <button
-              onClick={() => {
-                setHistory(null);
-                setRestoreTarget(null);
-              }}
-            >
-              关闭
-            </button>
-          </div>
-          <p className="muted">
-            最近 100 次保存。恢复会创建新提交，保留原有历史。
-          </p>
-          {history.map((item, index) => (
-            <div className="revision" key={item.commit}>
-              <time>{new Date(item.date).toLocaleString()}</time>
-              <code>{item.commit.slice(0, 8)}</code>
-              {index === 0 ? (
-                <span className="muted">最近落盘</span>
-              ) : (
-                <button
-                  disabled={restoring}
-                  onClick={() => setRestoreTarget(item.commit)}
-                >
-                  恢复此版本
-                </button>
-              )}
-              {restoreTarget === item.commit && (
-                <div className="restore-confirm">
-                  <p>
-                    将当前画布恢复到此版本？恢复前会先保存当前内容，原有历史会保留。
-                  </p>
-                  <button
-                    disabled={restoring}
-                    onClick={async () => {
-                      setRestoring(true);
-                      try {
-                        if (!(await save.flush())) {
-                          return;
-                        }
-                        await checked(
-                          await fetch(`${canvasURL(id)}/restore`, {
-                            method: "POST",
-                            headers: {
-                              "Content-Type": "application/json",
-                              "If-Match": save.version,
-                              "X-Drawsrv-Client": clientId,
-                            },
-                            body: JSON.stringify({ commit: item.commit }),
-                          }),
-                        );
-                        node.current!.ownerDocument.defaultView?.location.reload();
-                      } catch (error) {
-                        setHistoryError(message(error));
-                      } finally {
-                        setRestoring(false);
-                      }
-                    }}
-                  >
-                    确认恢复
-                  </button>
-                  <button onClick={() => setRestoreTarget(null)}>取消</button>
-                </div>
-              )}
-            </div>
-          ))}
-        </aside>
-      )}
     </div>
   );
 }

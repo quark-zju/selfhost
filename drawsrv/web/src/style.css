@@ -152,43 +152,6 @@ time {
   flex: 1;
   min-height: 0;
 }
-.history {
-  position: fixed;
-  z-index: 10;
-  top: 74px;
-  bottom: 16px;
-  right: 16px;
-  width: min(420px, calc(100vw - 32px));
-  overflow: auto;
-  background: white;
-  border: 1px solid #dddce8;
-  border-radius: 12px;
-  padding: 16px;
-  box-shadow: 0 8px 50px #25243a25;
-}
-.revision {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  border-bottom: 1px solid #eee;
-  padding: 14px 0;
-}
-.revision time {
-  flex: 1 0 100%;
-}
-.revision code {
-  font-size: 12px;
-}
-.restore-confirm {
-  width: 100%;
-  background: #f5f3ff;
-  padding: 10px;
-  font-size: 14px;
-}
-.restore-confirm button {
-  margin-right: 8px;
-}
 @media (max-width: 600px) {
   .editor-header {
     gap: 6px;
@@ -199,9 +162,6 @@ time {
   }
   .list-heading input {
     width: 45%;
-  }
-  .history {
-    top: 120px;
   }
 }
 

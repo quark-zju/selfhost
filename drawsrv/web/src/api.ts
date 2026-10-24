@@ -12,7 +12,6 @@ export type Canvas = {
   libraryItems: LibraryItems;
 };
 export type CanvasItem = { id: string; name: string; updated: string };
-export type HistoryItem = { commit: string; date: string };
 export const canvasURL = (id: string) =>
   `/api/canvases/${encodeURIComponent(id)}`;
 export async function checked(response: Response) {
