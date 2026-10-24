@@ -19,6 +19,7 @@ import {
 import "@excalidraw/excalidraw/index.css";
 import "./style.css";
 import { LocalAppStateStore } from "./localAppState";
+import { normalizeElements, normalizeLibraryItems } from "./normalize";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : "请求失败";
@@ -211,7 +212,7 @@ function Editor({
     );
     current.current = {
       name: current.current.name,
-      elements: data.elements,
+      elements: normalizeElements(data.elements),
       files: data.files || {},
       libraryItems: library.current,
     };
@@ -224,8 +225,8 @@ function Editor({
     queue();
   };
   const onLibraryChange = (items: LibraryItems) => {
-    library.current = items;
-    current.current = { ...current.current, libraryItems: items };
+    library.current = normalizeLibraryItems(items);
+    current.current = { ...current.current, libraryItems: library.current };
     queue();
   };
   useEffect(() => {

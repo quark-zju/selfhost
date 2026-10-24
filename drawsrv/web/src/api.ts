@@ -1,11 +1,15 @@
-import type { ExcalidrawInitialDataState } from "@excalidraw/excalidraw/types";
+import type {
+  ExcalidrawInitialDataState,
+  LibraryItems,
+} from "@excalidraw/excalidraw/types";
 import { SaveError } from "./autosave";
+import { normalizeElements, normalizeLibraryItems } from "./normalize";
 
 export type Canvas = {
   name: string;
   elements: NonNullable<ExcalidrawInitialDataState["elements"]>;
   files: NonNullable<ExcalidrawInitialDataState["files"]>;
-  libraryItems: NonNullable<ExcalidrawInitialDataState["libraryItems"]>;
+  libraryItems: LibraryItems;
 };
 export type CanvasItem = { id: string; name: string; updated: string };
 export type HistoryItem = { commit: string; date: string };
@@ -53,9 +57,15 @@ export async function loadCanvas(id: string) {
   );
   const { name, elements, files, libraryItems } =
     (await response.json()) as Canvas;
-  // Explicitly exclude appState from older servers or historical snapshots.
+  // Normalize before establishing the autosave baseline: restoration changing
+  // null to [] must not count as an edit. Also exclude legacy shared appState.
   return {
-    canvas: { name, elements, files, libraryItems },
+    canvas: {
+      name,
+      elements: normalizeElements(elements),
+      files,
+      libraryItems: normalizeLibraryItems(libraryItems),
+    },
     ...saveResult(response),
   };
 }
