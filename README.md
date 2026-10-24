@@ -1,4 +1,4 @@
-个人维护和使用的 self-host 工具集合。工具设计为通用，但需求判断来自我个人。
+self-host 工具集合。工具设计为通用，但需求判断来自我个人。
 
 ## [picosrv](picosrv/README.md)
 
