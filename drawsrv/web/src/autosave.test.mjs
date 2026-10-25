@@ -682,3 +682,30 @@ test("manual save bypasses the upload throttle without leaving a duplicate timer
   await new Promise(setImmediate);
   assert.deepEqual(calls, ["edit"]);
 });
+
+test("deletion during an upload preserves local work and stops queued uploads", async () => {
+  const ack = deferred();
+  let calls = 0;
+  const states = [];
+  const save = new Autosave(
+    "initial",
+    "v0",
+    async () => {
+      calls++;
+      await ack.promise;
+      return { etag: "v1", revision: "v1", persisted: true };
+    },
+    (state) => states.push(state),
+  );
+  save.queue("one");
+  const uploading = save.flush();
+  save.queue("two");
+  save.block("deleted");
+  ack.resolve();
+  assert.equal(await uploading, false);
+  assert.equal(await save.flush(), false);
+  assert.equal(save.dirty, true);
+  assert.equal(calls, 1);
+  assert.equal(states.at(-1).phase, "conflict");
+  save.dispose();
+});

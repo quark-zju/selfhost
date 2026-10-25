@@ -173,7 +173,7 @@ export class Autosave {
       this.disposed
     )
       return;
-    while (this.remote && !this.dirty && !this.disposed) {
+    while (this.remote && !this.dirty && !this.blocked && !this.disposed) {
       if (this.canRefresh && !this.canRefresh()) {
         this.refreshDeferred = true;
         this.log(locale.Sync.InteractionDeferred);
@@ -240,7 +240,7 @@ export class Autosave {
       // apply() synchronously locks editor input before any asynchronous library
       // work, and suppresses remote callbacks until the component has committed.
       await snapshot.apply();
-      if (this.disposed) return;
+      if (this.disposed || this.blocked) return;
       this.saved = snapshot.body;
       this.etag = snapshot.etag;
       this.revisionID = snapshot.revision;
@@ -368,6 +368,7 @@ export class Autosave {
         this.inFlight = body;
         try {
           const result = await this.send(body, this.etag, this.saved);
+          if (this.blocked) return false;
           this.log(locale.Sync.SaveResult, {
             applied: result.applied?.length,
             dropped: result.dropped?.length,
@@ -402,7 +403,7 @@ export class Autosave {
         }
       }
       await this.reconcile();
-      if (this.disposed) return false;
+      if (this.disposed || this.blocked) return false;
       if (mode === "persist" && !this.persisted) {
         this.notify({ phase: "persisting", message: locale.Save.Persisting });
         try {
@@ -410,6 +411,7 @@ export class Autosave {
             throw new SaveError(locale.Save.FlushUnavailable);
           }
           const result = await this.publish(this.etag);
+          if (this.blocked) return false;
           this.recordRemote(result);
           if (!result.persisted) {
             throw new SaveError(locale.Save.FlushUnconfirmed);
@@ -430,12 +432,12 @@ export class Autosave {
       this.timer = undefined;
     }
     await this.reconcile();
-    if (this.disposed) return false;
+    if (this.disposed || this.blocked) return false;
     this.report();
     return true;
   }
   private failure(error: unknown) {
-    this.blocked = error instanceof SaveError && error.blocked;
+    this.blocked ||= error instanceof SaveError && error.blocked;
     this.notify({
       phase: this.blocked ? "conflict" : "error",
       message: error instanceof Error ? error.message : locale.Save.Failed,
@@ -449,6 +451,10 @@ export class Autosave {
           ? { phase: "saved", message: locale.Save.Saved }
           : { phase: "synced", message: locale.Save.Synced },
     );
+  }
+  block(message: string) {
+    this.pending ??= this.inFlight;
+    this.failure(new SaveError(message, true));
   }
   dispose() {
     this.disposed = true;

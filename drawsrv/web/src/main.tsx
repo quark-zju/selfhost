@@ -73,6 +73,7 @@ function Gallery() {
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const visible = useMemo(
@@ -153,13 +154,55 @@ function Gallery() {
       </div>
       <ul className="canvas-list" aria-label={locale.Gallery.ListLabel}>
         {visible.items.map((canvas) => (
-          <li key={canvas.id}>
+          <li key={canvas.id} className="canvas-entry">
             <a className="canvas-row" href={`/?canvas=${canvas.id}`}>
               <strong style={titleTransition(canvas.id)}>{canvas.name}</strong>
               <time dateTime={canvas.updated}>
                 {new Date(canvas.updated).toLocaleString(getLanguage())}
               </time>
             </a>
+            <button
+              className="delete-canvas"
+              aria-label={locale.Gallery.DeleteLabel(canvas.name)}
+              disabled={deleting !== null}
+              onClick={async (event) => {
+                const ownerWindow =
+                  event.currentTarget.ownerDocument.defaultView;
+                setDeleting(canvas.id);
+                setError("");
+                try {
+                  const latest = await loadCanvas(canvas.id);
+                  if (
+                    !ownerWindow?.confirm(
+                      locale.Gallery.DeleteConfirm(latest.canvas.name),
+                    )
+                  )
+                    return;
+                  const response = await fetch(canvasURL(canvas.id), {
+                    method: "DELETE",
+                    headers: {
+                      "Content-Type": "application/json",
+                      "If-Match": latest.etag,
+                    },
+                  });
+                  if (response.status === 412)
+                    throw new Error(locale.Gallery.DeleteChanged);
+                  await checked(response);
+                  setCanvases(
+                    (items) =>
+                      items?.filter((item) => item.id !== canvas.id) ?? null,
+                  );
+                } catch (error) {
+                  setError(message(error));
+                } finally {
+                  setDeleting(null);
+                }
+              }}
+            >
+              {deleting === canvas.id
+                ? locale.Gallery.Deleting
+                : locale.Gallery.Delete}
+            </button>
           </li>
         ))}
       </ul>
@@ -555,6 +598,11 @@ function Editor({
     for (const kind of ["state", "change", "persisted"]) {
       events.addEventListener(kind, receive);
     }
+    events.addEventListener("deleted", () => {
+      if (!active) return;
+      save.block(locale.Errors.Deleted);
+      events.close();
+    });
     events.onopen = () => {
       if (!active) {
         return;

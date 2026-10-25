@@ -229,3 +229,17 @@ time {
   padding: 24px;
   color: #777589;
 }
+
+.canvas-entry {
+  display: flex;
+  align-items: center;
+}
+.canvas-entry .canvas-row {
+  flex: 1;
+  min-width: 0;
+}
+.delete-canvas {
+  flex-shrink: 0;
+  margin-right: 12px;
+  color: #a32342;
+}

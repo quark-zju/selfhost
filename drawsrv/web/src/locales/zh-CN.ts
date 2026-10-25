@@ -11,6 +11,12 @@ const locale: Locale = {
     NewCanvasName: "新画布名称",
     NewCanvasPlaceholder: "给新画布起个名字",
     CreateCanvas: "新建画布",
+    Delete: "删除",
+    Deleting: "正在删除…",
+    DeleteChanged: "画布刚被其他页面修改，尚未删除。请重试。",
+    DeleteLabel: (name) => `删除画布“${name}”`,
+    DeleteConfirm: (name) =>
+      `删除画布“${name}”？服务器回收站保留 30 天，期间可由管理员恢复。`,
     SortHint: "最近更新优先 · 每页 20 项",
     Search: "搜索画布",
     ListLabel: "画布列表",
@@ -35,6 +41,8 @@ const locale: Locale = {
   },
   Errors: {
     RemoteChanged: "此画布已被其他页面修改。请导出当前内容，再刷新页面。",
+    Deleted:
+      "此画布已在其他页面删除，已停止同步。如需保留本地内容，请导出备份。",
     TooLarge: "画布超过服务端大小限制",
     Auth: "请检查反代登录状态",
     RetryOrBackup: "请重试或导出备份",

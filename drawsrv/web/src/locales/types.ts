@@ -10,6 +10,11 @@ export interface Locale {
     NewCanvasName: string;
     NewCanvasPlaceholder: string;
     CreateCanvas: string;
+    Delete: string;
+    Deleting: string;
+    DeleteChanged: string;
+    DeleteLabel: (name: string) => string;
+    DeleteConfirm: (name: string) => string;
     SortHint: string;
     Search: string;
     ListLabel: string;
@@ -34,6 +39,7 @@ export interface Locale {
   };
   Errors: {
     RemoteChanged: string;
+    Deleted: string;
     TooLarge: string;
     Auth: string;
     RetryOrBackup: string;

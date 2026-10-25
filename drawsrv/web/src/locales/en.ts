@@ -11,6 +11,13 @@ const locale: Locale = {
     NewCanvasName: "New canvas name",
     NewCanvasPlaceholder: "Name your new canvas",
     CreateCanvas: "New canvas",
+    Delete: "Delete",
+    Deleting: "Deleting…",
+    DeleteChanged:
+      "The canvas just changed in another page and was not deleted. Please try again.",
+    DeleteLabel: (name) => `Delete canvas “${name}”`,
+    DeleteConfirm: (name) =>
+      `Delete canvas “${name}”? It will remain in the server trash for 30 days and can be recovered by an administrator during that time.`,
     SortHint: "Recently updated first · 20 per page",
     Search: "Search canvases",
     ListLabel: "Canvas list",
@@ -37,6 +44,8 @@ const locale: Locale = {
   Errors: {
     RemoteChanged:
       "This canvas was changed in another tab. Export your current content before refreshing.",
+    Deleted:
+      "This canvas was deleted in another page. Sync has stopped. Export a backup to keep your local content.",
     TooLarge: "The canvas exceeds the server size limit",
     Auth: "Check your reverse proxy login",
     RetryOrBackup: "Retry or export a backup",
