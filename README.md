@@ -8,10 +8,10 @@ self-host 工具集合。工具设计为通用，但需求判断来自我个人�
 
 ## [picomx](picomx/README.md)
 
-轻量 POP3 + SMTP 服务。侧重个人域名用例 - 允许任意拥有域名的邮箱地址收发件，无需提前注册相关用户名。
+轻量 POP3 + SMTP 服务。侧重个人域名用例 - 允许任意拥有域名的邮箱地址收发件，无需提前注册相关用户名。邮件历史 Git 保存。
 
 对于 VPS 拦截 SMTP 的情况，可配合 purelymail 重定向使用。
 
 ## [drawsrv](drawsrv/README.md)
 
-轻量 Excalidraw 自托管。侧重多画布和服务端保存。
+轻量 Excalidraw 服务。支持多画布，多客户端同步，画布编辑 Git 保存。
