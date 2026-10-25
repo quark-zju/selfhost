@@ -150,26 +150,6 @@ time {
   border-color: transparent;
   font-weight: 600;
 }
-.excalidraw .server-save-button {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 36px;
-  width: 36px;
-  height: 36px;
-  padding: 8px;
-  border: 0;
-  background: transparent;
-  color: var(--icon-fill-color, #57536b);
-}
-.excalidraw .server-save-button:hover {
-  background: #f0eefb;
-  color: #6c5cce;
-}
-.excalidraw .server-save-button:active {
-  background: #e6e0ff;
-}
 .drawing {
   flex: 1;
   min-height: 0;
@@ -205,32 +185,4 @@ time {
 .pagination span {
   color: #777589;
   font-size: 14px;
-}
-
-.toolbar-tooltip {
-  position: absolute;
-  z-index: 50;
-  bottom: calc(100% + 8px);
-  left: 0;
-  padding: 6px 9px;
-  border-radius: 6px;
-  background: #25243a;
-  color: white;
-  font-size: 12px;
-  line-height: 1.4;
-  white-space: nowrap;
-  pointer-events: none;
-  visibility: hidden;
-  opacity: 0;
-}
-.server-save-button:is(:hover, :focus-visible) .toolbar-tooltip {
-  visibility: visible;
-  opacity: 1;
-}
-
-.server-save-button-mobile .toolbar-tooltip {
-  bottom: auto;
-  top: calc(100% + 8px);
-  left: auto;
-  right: 0;
 }
