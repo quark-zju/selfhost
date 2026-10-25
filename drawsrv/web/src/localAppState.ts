@@ -1,3 +1,4 @@
+import { t } from "./i18n.ts";
 import type { AppState } from "@excalidraw/excalidraw/types";
 
 // sessionStorage is scoped to this tab and canvas: separate clients can pan,
@@ -57,7 +58,7 @@ export class LocalAppStateStore {
       this.failed = false;
     } catch {
       if (!this.failed) {
-        console.log("[drawsrv:local] 无法保存本标签页的 appState");
+        console.log(t("[drawsrv:local] 无法保存本标签页的 appState"));
       }
       this.failed = true;
     }

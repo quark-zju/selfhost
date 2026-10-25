@@ -1,3 +1,4 @@
+import { t } from "./i18n.ts";
 export type SaveState = {
   phase:
     | "saved"
@@ -137,15 +138,17 @@ export class Autosave {
       blocked: this.blocked,
     });
     if (this.blocked || this.disposed) {
-      this.log("保留本地冲突副本，忽略自动刷新");
+      this.log(t("保留本地冲突副本，忽略自动刷新"));
       return;
     }
     if (this.running) {
-      this.log("等待当前保存完成后比较 HASH");
+      this.log(t("等待当前保存完成后比较 HASH"));
       return;
     }
     this.log(
-      this.dirty ? "本地有修改，按上传节流先保存" : "本地无修改，比较 HASH",
+      this.dirty
+        ? t("本地有修改，按上传节流先保存")
+        : t("本地无修改，比较 HASH"),
     );
     await this.run("auto");
   }
@@ -174,7 +177,7 @@ export class Autosave {
     while (this.remote && !this.dirty && !this.disposed) {
       if (this.canRefresh && !this.canRefresh()) {
         this.refreshDeferred = true;
-        this.log("正在操作编辑器，延后原地更新");
+        this.log(t("正在操作编辑器，延后原地更新"));
         return;
       }
       const remote = this.remote,
@@ -187,22 +190,26 @@ export class Autosave {
         this.disposed ||
         sequence !== this.editSequence
       ) {
-        this.log("比较期间有新修改，延后更新");
+        this.log(t("比较期间有新修改，延后更新"));
         return;
       }
       if (remote !== this.remote || baseline !== this.saved) continue;
       const compatible = localHash === remote.hash;
-      this.log("HASH 比较", { localHash, serverHash: remote.hash, compatible });
+      this.log(t("HASH 比较"), {
+        localHash,
+        serverHash: remote.hash,
+        compatible,
+      });
       if (compatible) {
         this.etag = remote.etag;
         this.revisionID = remote.revision;
         this.persisted = remote.persisted;
         this.remoteDirty = false;
         this.refreshDeferred = false;
-        this.log("有效内容一致，继续编辑");
+        this.log(t("有效内容一致，继续编辑"));
         return;
       }
-      this.log("本地无待保存修改，拉取最新快照以原地更新");
+      this.log(t("本地无待保存修改，拉取最新快照以原地更新"));
       const snapshot = await this.loadSnapshot();
       const fetchedHash = await this.hashBody(snapshot.body);
       if (
@@ -211,12 +218,12 @@ export class Autosave {
         this.disposed ||
         sequence !== this.editSequence
       ) {
-        this.log("拉取期间有新修改或已退出，丢弃快照");
+        this.log(t("拉取期间有新修改或已退出，丢弃快照"));
         return;
       }
       if (fetchedHash !== snapshot.hash)
         throw new SaveError(
-          "服务端快照 HASH 不匹配，请导出备份后手动刷新。",
+          t("服务端快照 HASH 不匹配，请导出备份后手动刷新。"),
           true,
         );
       const latest = this.remote!;
@@ -226,12 +233,12 @@ export class Autosave {
         (epoch === latestEpoch && Number(revision) < Number(latestRevision)) ||
         (latest !== remote && epoch !== latestEpoch)
       ) {
-        this.log("快照落后于 SSE，重新拉取");
+        this.log(t("快照落后于 SSE，重新拉取"));
         continue;
       }
       if (this.canRefresh && !this.canRefresh()) {
         this.refreshDeferred = true;
-        this.log("拉取期间开始编辑，延后原地更新");
+        this.log(t("拉取期间开始编辑，延后原地更新"));
         return;
       }
       // apply() synchronously locks editor input before any asynchronous library
@@ -245,7 +252,7 @@ export class Autosave {
         snapshot.persisted || this.observedDurable === snapshot.revision;
       this.recordRemote(snapshot, true);
       this.refreshDeferred = false;
-      this.log("快照已原地应用并更新保存基准", {
+      this.log(t("快照已原地应用并更新保存基准"), {
         hash: snapshot.hash,
         revision: snapshot.revision,
       });
@@ -288,7 +295,7 @@ export class Autosave {
     }
     this.editSequence++;
     this.pending = body;
-    this.notify({ phase: "pending", message: "等待同步…" });
+    this.notify({ phase: "pending", message: t("等待同步…") });
     // Do not restart this timer on every edit: continuous drawing must upload.
     if (this.timer === undefined && !this.ready) {
       this.timer = setTimeout(() => {
@@ -363,11 +370,11 @@ export class Autosave {
         if (body === this.saved) {
           continue;
         }
-        this.notify({ phase: "saving", message: "正在同步到服务器…" });
+        this.notify({ phase: "saving", message: t("正在同步到服务器…") });
         this.inFlight = body;
         try {
           const result = await this.send(body, this.etag, this.saved);
-          this.log("保存结果", {
+          this.log(t("保存结果"), {
             applied: result.applied?.length,
             dropped: result.dropped?.length,
             details: result.dropped,
@@ -378,7 +385,13 @@ export class Autosave {
             this.pending ??= body;
             this.failure(
               new SaveError(
-                `部分修改冲突：${result.applied?.length ?? 0} 项已应用，${result.dropped.length} 项未应用。请导出备份后手动刷新。`,
+                t(
+                  "部分修改冲突：{applied} 项已应用，{dropped} 项未应用。请导出备份后手动刷新。",
+                  {
+                    applied: result.applied?.length ?? 0,
+                    dropped: result.dropped.length,
+                  },
+                ),
                 true,
               ),
             );
@@ -400,15 +413,15 @@ export class Autosave {
       await this.reconcile();
       if (this.disposed) return false;
       if (mode === "persist" && !this.persisted) {
-        this.notify({ phase: "persisting", message: "正在落盘并记录历史…" });
+        this.notify({ phase: "persisting", message: t("正在落盘并记录历史…") });
         try {
           if (!this.publish) {
-            throw new SaveError("无法请求落盘，请重试");
+            throw new SaveError(t("无法请求落盘，请重试"));
           }
           const result = await this.publish(this.etag);
           this.recordRemote(result);
           if (!result.persisted) {
-            throw new SaveError("服务器尚未确认落盘，请重试");
+            throw new SaveError(t("服务器尚未确认落盘，请重试"));
           }
           this.etag = result.etag;
           this.revisionID = result.revision;
@@ -434,16 +447,16 @@ export class Autosave {
     this.blocked = error instanceof SaveError && error.blocked;
     this.notify({
       phase: this.blocked ? "conflict" : "error",
-      message: error instanceof Error ? error.message : "保存失败，请重试",
+      message: error instanceof Error ? error.message : t("保存失败，请重试"),
     });
   }
   private report() {
     this.notify(
       this.pending !== null
-        ? { phase: "pending", message: "等待同步…" }
+        ? { phase: "pending", message: t("等待同步…") }
         : this.persisted
-          ? { phase: "saved", message: "已落盘 · 历史已记录" }
-          : { phase: "synced", message: "已同步到服务器 · 等待落盘" },
+          ? { phase: "saved", message: t("已落盘 · 历史已记录") }
+          : { phase: "synced", message: t("已同步到服务器 · 等待落盘") },
     );
   }
   dispose() {

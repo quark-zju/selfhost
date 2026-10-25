@@ -1,3 +1,4 @@
+import { t, getLanguage, selectLanguage, setLanguage } from "./i18n.ts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
@@ -36,7 +37,7 @@ import { reuseRemoteElements, hasChangedExistingFiles } from "./remoteScene";
 import { paginateCanvases } from "./canvasList";
 
 const message = (error: unknown) =>
-  error instanceof Error ? error.message : "请求失败";
+  error instanceof Error ? error.message : t("请求失败");
 
 // Keep the shared title node outside React so editor updates cannot replace it.
 function updateCanvasTitle(root: HTMLElement, id: string, name: string) {
@@ -84,7 +85,7 @@ function Gallery() {
   useEffect(load, []);
   return (
     <main className="gallery">
-      <h1>我的画布</h1>
+      <h1>{t("我的画布")}</h1>
       <form
         className="create"
         onSubmit={async (event) => {
@@ -110,30 +111,36 @@ function Gallery() {
         }}
       >
         <input
-          aria-label="新画布名称"
-          placeholder="给新画布起个名字"
+          aria-label={t("新画布名称")}
+          placeholder={t("给新画布起个名字")}
           value={name}
           maxLength={60}
           required
           onChange={(event) => setName(event.target.value)}
         />
         <button className="primary" disabled={busy || !name.trim()}>
-          新建画布
+          {t("新建画布")}
         </button>
       </form>
       {error && (
         <p className="error" role="alert">
-          {error} <button onClick={load}>重试</button>
+          {error} <button onClick={load}>{t("重试")}</button>
         </p>
       )}
       <div className="list-heading">
         <div>
-          <h2>{canvases ? `${visible.total} 个画布` : "正在加载…"}</h2>
-          <span className="muted">最近更新优先 · 每页 20 项</span>
+          <h2>
+            {canvases
+              ? t(visible.total === 1 ? "1 个画布" : "{count} 个画布", {
+                  count: visible.total,
+                })
+              : t("正在加载…")}
+          </h2>
+          <span className="muted">{t("最近更新优先 · 每页 20 项")}</span>
         </div>
         <input
-          aria-label="搜索画布"
-          placeholder="搜索画布"
+          aria-label={t("搜索画布")}
+          placeholder={t("搜索画布")}
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -141,13 +148,13 @@ function Gallery() {
           }}
         />
       </div>
-      <ul className="canvas-list" aria-label="画布列表">
+      <ul className="canvas-list" aria-label={t("画布列表")}>
         {visible.items.map((canvas) => (
           <li key={canvas.id}>
             <a className="canvas-row" href={`/?canvas=${canvas.id}`}>
               <strong style={titleTransition(canvas.id)}>{canvas.name}</strong>
               <time dateTime={canvas.updated}>
-                {new Date(canvas.updated).toLocaleString()}
+                {new Date(canvas.updated).toLocaleString(getLanguage())}
               </time>
             </a>
           </li>
@@ -156,26 +163,29 @@ function Gallery() {
       {canvases && visible.total === 0 && (
         <p className="empty">
           {query.trim()
-            ? "没有找到匹配的画布。"
-            : "创建第一个画布，或创建后导入已有的 .excalidraw 文件。"}
+            ? t("没有找到匹配的画布。")
+            : t("创建第一个画布，或创建后导入已有的 .excalidraw 文件。")}
         </p>
       )}
       {visible.pages > 1 && (
-        <nav className="pagination" aria-label="画布分页">
+        <nav className="pagination" aria-label={t("画布分页")}>
           <button
             disabled={visible.page <= 1}
             onClick={() => setPage(visible.page - 1)}
           >
-            上一页
+            {t("上一页")}
           </button>
           <span role="status" aria-live="polite">
-            第 {visible.page} / {visible.pages} 页
+            {t("第 {page} / {pages} 页", {
+              page: visible.page,
+              pages: visible.pages,
+            })}
           </span>
           <button
             disabled={visible.page >= visible.pages}
             onClick={() => setPage(visible.page + 1)}
           >
-            下一页
+            {t("下一页")}
           </button>
         </nav>
       )}
@@ -263,7 +273,7 @@ function Editor({
             )
           ) {
             throw new SaveError(
-              "服务端返回了无效的应用结果，请导出备份后刷新",
+              t("服务端返回了无效的应用结果，请导出备份后刷新"),
               true,
             );
           }
@@ -300,7 +310,7 @@ function Editor({
               apply: async () => {
                 const container = node.current,
                   instance = api.current;
-                if (!container || !instance) throw Error("编辑器尚未就绪");
+                if (!container || !instance) throw Error(t("编辑器尚未就绪"));
                 // The controller rechecks pending edits before entering this
                 // mutation phase. Lock input while asynchronous library work
                 // runs, and suppress only this phase's component callbacks.
@@ -343,7 +353,9 @@ function Editor({
                     )
                   ) {
                     console.log(
-                      "[drawsrv:sync] 同 ID 图片内容改变，仅重建编辑器图片缓存；保留视图，清空组件撤销栈",
+                      t(
+                        "[drawsrv:sync] 同 ID 图片内容改变，仅重建编辑器图片缓存；保留视图，清空组件撤销栈",
+                      ),
                     );
                     current.current = next.canvas;
                     library.current = next.canvas.libraryItems;
@@ -355,14 +367,14 @@ function Editor({
                       };
                       const timer = ownerWindow.setTimeout(() => {
                         sceneReady.current = null;
-                        reject(Error("编辑器重新初始化超时"));
+                        reject(Error(t("编辑器重新初始化超时")));
                       }, 10000);
                       sceneReady.current = {
                         resolve: finish,
                         cancel: () => {
                           ownerWindow.clearTimeout(timer);
                           sceneReady.current = null;
-                          reject(Error("编辑器已关闭"));
+                          reject(Error(t("编辑器已关闭")));
                         },
                       };
                     });
@@ -437,11 +449,11 @@ function Editor({
                   }
                 } catch (error) {
                   console.log(
-                    "[drawsrv:sync] 原地更新失败，保留页面供备份",
+                    t("[drawsrv:sync] 原地更新失败，保留页面供备份"),
                     error,
                   );
                   throw new SaveError(
-                    "无法原地更新画布，请导出备份后手动刷新。",
+                    t("无法原地更新画布，请导出备份后手动刷新。"),
                     true,
                   );
                 } finally {
@@ -510,8 +522,8 @@ function Editor({
       logSaveState({
         phase: loaded.persisted ? "saved" : "synced",
         message: loaded.persisted
-          ? "已落盘 · 历史已记录"
-          : "已同步到服务器 · 等待落盘",
+          ? t("已落盘 · 历史已记录")
+          : t("已同步到服务器 · 等待落盘"),
       });
     }
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -549,11 +561,11 @@ function Editor({
           return;
         }
         void save.observeRemote(data, data.source).catch((error) => {
-          console.log("[drawsrv:sync] 同步决策失败，保留本地内容", error);
-          setConflict("无法确认同步状态，请导出备份后手动刷新。");
+          console.log(t("[drawsrv:sync] 同步决策失败，保留本地内容"), error);
+          setConflict(t("无法确认同步状态，请导出备份后手动刷新。"));
         });
       } catch {
-        console.log("[drawsrv:events] 忽略无效的状态通知");
+        console.log(t("[drawsrv:events] 忽略无效的状态通知"));
       }
     };
     for (const kind of ["state", "change", "persisted"]) {
@@ -565,14 +577,14 @@ function Editor({
       }
       console.log(
         disconnected
-          ? "[drawsrv:events] 通知连接已恢复"
-          : "[drawsrv:events] 通知连接已建立",
+          ? t("[drawsrv:events] 通知连接已恢复")
+          : t("[drawsrv:events] 通知连接已建立"),
       );
       disconnected = false;
     };
     events.onerror = () => {
       if (active && !disconnected) {
-        console.log("[drawsrv:events] 通知连接中断，正在重连");
+        console.log(t("[drawsrv:events] 通知连接中断，正在重连"));
       }
       disconnected = true;
     };
@@ -627,11 +639,11 @@ function Editor({
   const rename = () => {
     editingName.current = true;
     try {
-      const value = ownerWindow.prompt("画布名称", current.current.name);
+      const value = ownerWindow.prompt(t("画布名称"), current.current.name);
       if (value === null) return;
       const name = value.trim();
       if (!name || name.length > 60) {
-        ownerWindow.alert("画布名称需为 1–60 个字符");
+        ownerWindow.alert(t("画布名称需为 1–60 个字符"));
         return;
       }
       if (name !== current.current.name) {
@@ -649,13 +661,13 @@ function Editor({
       {conflict && (
         <div className="remote-update" role="status">
           <span>{conflict}</span>
-          <button onClick={exportBackup}>导出备份</button>
+          <button onClick={exportBackup}>{t("导出备份")}</button>
           <button
             onClick={() =>
               node.current!.ownerDocument.defaultView?.location.reload()
             }
           >
-            重新加载
+            {t("重新加载")}
           </button>
         </div>
       )}
@@ -668,10 +680,10 @@ function Editor({
           }}
           onChange={onChange}
           onLibraryChange={onLibraryChange}
-          langCode="zh-CN"
+          langCode={getLanguage()}
         >
           <MainMenu>
-            <MainMenu.Item onSelect={rename}>重命名</MainMenu.Item>
+            <MainMenu.Item onSelect={rename}>{t("重命名")}</MainMenu.Item>
             <MainMenu.Item
               icon={
                 <svg
@@ -692,7 +704,7 @@ function Editor({
               }
               onSelect={() => void save.flush()}
             >
-              保存到服务器
+              {t("保存到服务器")}
             </MainMenu.Item>
             <MainMenu.Separator />
             <MainMenu.DefaultItems.LoadScene />
@@ -753,10 +765,12 @@ function App({ root }: { root: HTMLElement }) {
   if (error) {
     return (
       <main className="gallery">
-        <h1>无法打开画布</h1>
+        <h1>{t("无法打开画布")}</h1>
         <p role="alert">{error}</p>
-        <button onClick={() => setAttempt(attempt + 1)}>重试</button>{" "}
-        <a href="/">返回列表</a>
+        <button onClick={() => setAttempt(attempt + 1)}>
+          {t("重试")}
+        </button>{" "}
+        <a href="/">{t("返回列表")}</a>
       </main>
     );
   }
@@ -771,11 +785,23 @@ function App({ root }: { root: HTMLElement }) {
   ) : (
     <div className="workspace">
       <div className="canvas-loading" role="status">
-        正在加载画布…
+        {t("正在加载画布…")}
       </div>
     </div>
   );
 }
 
 const root = document.getElementById("root")!;
+const owner = root.ownerDocument.defaultView!;
+setLanguage(
+  selectLanguage(
+    owner.navigator.languages.length
+      ? owner.navigator.languages
+      : [owner.navigator.language],
+  ),
+);
+root.ownerDocument.documentElement.lang = getLanguage();
+if (!new URL(owner.location.href).searchParams.has("canvas")) {
+  root.ownerDocument.title = `${t("我的画布")} | drawsrv`;
+}
 createRoot(root).render(<App root={root} />);
