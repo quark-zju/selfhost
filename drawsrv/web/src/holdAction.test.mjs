@@ -40,7 +40,7 @@ function fixture() {
   };
 }
 
-test("a continuous two-second hold fires once, despite repeated starts", () => {
+test("a continuous one-second hold fires once, despite repeated starts", () => {
   const f = fixture();
   f.hold.start();
   f.advance(HOLD_DURATION_MS - 1);
@@ -55,13 +55,13 @@ test("a continuous two-second hold fires once, despite repeated starts", () => {
 test("cancelled holds cannot delete later and a new hold starts from zero", () => {
   const f = fixture();
   f.hold.start();
-  f.advance(1500);
+  f.advance(HOLD_DURATION_MS - 1);
   f.hold.cancel();
   f.hold.cancel();
-  f.advance(2000);
+  f.advance(HOLD_DURATION_MS);
   assert.equal(f.fired, 0);
   f.hold.start();
-  f.advance(1999);
+  f.advance(HOLD_DURATION_MS - 1);
   assert.equal(f.fired, 0);
   f.advance(1);
   assert.equal(f.fired, 1);

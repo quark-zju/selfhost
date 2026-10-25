@@ -314,7 +314,7 @@ a.canvas-row:hover time {
   opacity: 0.2;
 }
 .holding .hold-progress {
-  animation: hold-confirm 2s linear forwards;
+  animation: hold-confirm 1s linear forwards;
 }
 @keyframes hold-confirm {
   to {

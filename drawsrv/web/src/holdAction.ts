@@ -1,4 +1,4 @@
-export const HOLD_DURATION_MS = 2000;
+export const HOLD_DURATION_MS = 1000;
 
 // One continuous hold; cancellation never leaves a delayed destructive action.
 export class HoldAction {

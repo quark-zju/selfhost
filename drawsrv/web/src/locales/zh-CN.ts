@@ -14,7 +14,7 @@ const locale: Locale = {
     Trash: "回收站",
     TrashHint: "最近删除优先 · 保留 30 天",
     TrashEmpty: "回收站是空的。",
-    DeleteHint: "按住 2 秒移入回收站，保留 30 天；松开取消",
+    DeleteHint: "按住 1 秒移入回收站，保留 30 天；松开取消",
     RestoreHint: "恢复到我的画布",
     RestoreLabel: (name) => `恢复画布“${name}”`,
     DeleteChanged: "画布刚被其他页面修改，尚未删除。请重试。",

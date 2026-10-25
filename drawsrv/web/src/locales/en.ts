@@ -15,7 +15,7 @@ const locale: Locale = {
     TrashHint: "Recently deleted first · Kept for 30 days",
     TrashEmpty: "Trash is empty.",
     DeleteHint:
-      "Hold for 2 seconds to move to trash for 30 days; release to cancel",
+      "Hold for 1 second to move to trash for 30 days; release to cancel",
     RestoreHint: "Restore to My canvases",
     RestoreLabel: (name) => `Restore canvas “${name}”`,
     DeleteChanged:
