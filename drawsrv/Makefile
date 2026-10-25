@@ -7,7 +7,9 @@ WEB_BUILD := web/dist
 GO ?= go
 NPM ?= npm
 TARGET_OS ?= linux
-TARGET_ARCH ?= amd64
+# Follow the build host instead of guessing amd64: arm64 machines are common,
+# and a mismatched release would only fail when the VPS starts it.
+TARGET_ARCH ?= $(shell $(GO) env GOARCH)
 RELEASE_DIR ?= dist
 PREFIX ?= /usr/local/bin
 INSTALL_PATH := $(PREFIX)/$(BINARY)
@@ -137,7 +139,7 @@ clean:
 help:
 	@echo 'make build           Build native Go binary using committed frontend (no Node.js/npm)'
 	@echo 'make web             Rebuild frontend with npm; commit web/dist with source changes'
-	@echo 'make release         Optional Linux amd64 archive using committed frontend (TARGET_ARCH=arm64 supported)'
+	@echo 'make release         Optional Linux archive using committed frontend (TARGET_ARCH defaults to host arch)'
 	@echo 'make deploy          Install prebuilt artifacts, account, config and systemd unit'
 	@echo 'make enable          Enable and start the installed service'
 	@echo 'make restart         Restart after an upgrade/config change'
