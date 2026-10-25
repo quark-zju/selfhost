@@ -621,8 +621,51 @@ function Editor({
             void save.resumeRemote();
           }}
         />
-        <button onClick={() => void save.flush()}>保存</button>
-        <button onClick={exportBackup}>导出备份</button>
+        <button
+          className="icon-button"
+          type="button"
+          aria-label="保存"
+          title="保存"
+          onClick={() => void save.flush()}
+        >
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path d="M5 3h12l4 4v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+            <path d="M7 3v6h10V3M7 21v-8h10v8" />
+          </svg>
+        </button>
+        <button
+          className="icon-button"
+          type="button"
+          aria-label="下载备份"
+          title="下载备份（.excalidraw）"
+          onClick={exportBackup}
+        >
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path d="M12 3v12m-5-5 5 5 5-5M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" />
+          </svg>
+        </button>
       </header>
       {conflict && (
         <div className="remote-update" role="status">

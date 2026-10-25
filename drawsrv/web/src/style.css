@@ -141,12 +141,33 @@ time {
   border-bottom: 1px solid #e5e3ef;
 }
 .editor-header input {
+  height: 36px;
+  padding: 6px 4px;
   flex: 1;
   min-width: 120px;
   max-width: 320px;
   margin-right: auto;
   border-color: transparent;
   font-weight: 600;
+}
+.editor-header .icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  padding: 8px;
+  border: 0;
+  background: transparent;
+  color: #57536b;
+}
+.editor-header .icon-button:hover {
+  background: #f0eefb;
+  color: #6c5cce;
+}
+.editor-header .icon-button:active {
+  background: #e6e0ff;
 }
 .drawing {
   flex: 1;
@@ -155,10 +176,6 @@ time {
 @media (max-width: 600px) {
   .editor-header {
     gap: 6px;
-  }
-  .editor-header button {
-    padding: 7px;
-    font-size: 12px;
   }
   .list-heading input {
     width: 45%;
