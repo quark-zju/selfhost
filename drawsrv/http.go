@@ -52,17 +52,11 @@ func newHandler(s *store, static fs.FS) http.Handler {
 						http.Error(w, "cannot read frontend", 500)
 						return
 					}
-					hint, _ := json.Marshal(struct {
-						ID   string `json:"id"`
-						Name string `json:"name"`
-					}{id, name})
-					body = bytes.Replace(body, []byte(`<meta name="drawsrv-canvas" content="" />`),
-						[]byte(`<meta name="drawsrv-canvas" content="`+html.EscapeString(string(hint))+`" />`), 1)
 					body = bytes.Replace(body, []byte("<title>我的画布 | drawsrv</title>"),
 						[]byte("<title>"+html.EscapeString(name)+" | drawsrv</title>"), 1)
-					// Render the transition target before React or canvas data loads.
-					initial := `<div class="workspace"><header class="editor-header"><div class="canvas-title" style="view-transition-name:canvas-title-` + id + `"><input aria-label="画布名称" value="` + html.EscapeString(name) + `" readonly></div></header><div class="canvas-loading" role="status">正在加载画布…</div></div>`
-					body = bytes.Replace(body, []byte("<!--drawsrv-initial-->"), []byte(initial), 1)
+					// This title stays outside React's mount, including during navigation.
+					header := `<header class="editor-header"><h1 id="canvas-title" class="canvas-title" data-canvas-id="` + id + `" style="view-transition-name:canvas-title-` + id + `">` + html.EscapeString(name) + `</h1></header>`
+					body = bytes.Replace(body, []byte("<!--drawsrv-header-->"), []byte(header), 1)
 					w.Header().Set("ETag", revision(body))
 					w.Header().Set("Content-Type", "text/html; charset=utf-8")
 					http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(body))

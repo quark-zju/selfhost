@@ -139,38 +139,42 @@ time {
   background: #fff0f3;
   padding: 12px;
 }
-.workspace {
+.page-shell {
   height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+#root {
+  flex: 1;
+  min-height: 0;
+}
+.workspace {
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: white;
 }
 .editor-header {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 10px 12px;
+  flex: none;
+  padding: 10px 16px;
   border-bottom: 1px solid #e5e3ef;
+  background: white;
 }
-.editor-header input {
-  height: 36px;
-  padding: 6px 4px;
-  flex: 1;
-  min-width: 120px;
-  max-width: 320px;
-  margin-right: auto;
-  border-color: transparent;
+.editor-header .canvas-title {
+  margin: 0;
+  width: fit-content;
+  max-width: 100%;
+  font-size: 16px;
   font-weight: 600;
+  line-height: 36px;
+  letter-spacing: normal;
+  overflow-wrap: anywhere;
 }
 .drawing {
   flex: 1;
   min-height: 0;
 }
 @media (max-width: 600px) {
-  .editor-header {
-    gap: 6px;
-  }
   .canvas-row {
     align-items: flex-start;
     flex-direction: column;
@@ -224,15 +228,4 @@ time {
 .canvas-loading {
   padding: 24px;
   color: #777589;
-}
-
-.editor-header .canvas-title {
-  flex: 1;
-  min-width: 120px;
-  max-width: 320px;
-  margin-right: auto;
-}
-.editor-header .canvas-title input {
-  width: 100%;
-  margin: 0;
 }

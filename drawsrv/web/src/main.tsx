@@ -38,18 +38,25 @@ import { paginateCanvases } from "./canvasList";
 const message = (error: unknown) =>
   error instanceof Error ? error.message : "请求失败";
 
-// Metadata is embedded in HTML; canvas contents still load through the API.
-function pendingTitle(doc: Document, id: string | null): string | null {
-  try {
-    const hint = JSON.parse(
-      doc
-        .querySelector('meta[name="drawsrv-canvas"]')
-        ?.getAttribute("content") ?? "null",
-    );
-    return hint?.id === id && typeof hint.name === "string" ? hint.name : null;
-  } catch {
-    return null;
+// Keep the shared title node outside React so editor updates cannot replace it.
+function updateCanvasTitle(root: HTMLElement, id: string, name: string) {
+  const doc = root.ownerDocument;
+  let title = doc.getElementById("canvas-title");
+  if (!title) {
+    const header = doc.createElement("header");
+    header.className = "editor-header";
+    title = doc.createElement("h1");
+    title.id = "canvas-title";
+    title.className = "canvas-title";
+    title.dataset.canvasId = id;
+    title.style.viewTransitionName = titleTransition(id).viewTransitionName;
+    header.append(title);
+    root.before(header);
   }
+  if (title.dataset.canvasId === id && title.textContent !== name) {
+    title.textContent = name;
+  }
+  doc.title = `${name} | drawsrv`;
 }
 const titleTransition = (id: string) => ({
   viewTransitionName: `canvas-title-${id.replace(/[^a-zA-Z0-9_-]/g, "_")}`,
@@ -181,11 +188,13 @@ function Editor({
   loaded,
   clientId,
   ownerWindow,
+  root,
 }: {
   id: string;
   loaded: Awaited<ReturnType<typeof loadCanvas>>;
   clientId: string;
   ownerWindow: Window;
+  root: HTMLElement;
 }) {
   const [localState] = useState(() => new LocalAppStateStore(id, ownerWindow));
   const [scene, setScene] = useState(() => ({
@@ -201,10 +210,10 @@ function Editor({
   );
   const current = useRef<Canvas>(loaded.canvas);
   const library = useRef(loaded.canvas.libraryItems);
-  const [name, setName] = useState(loaded.canvas.name);
+  const updateTitle = (name: string) => updateCanvasTitle(root, id, name);
   useEffect(() => {
-    ownerWindow.document.title = `${name.trim() || current.current.name} | drawsrv`;
-  }, [name, ownerWindow]);
+    updateCanvasTitle(root, id, loaded.canvas.name);
+  }, [root, id, loaded.canvas.name]);
   const [conflict, setConflict] = useState("");
   const lastSaveMessage = useRef<string | null>(null);
   const logSaveState = (state: SaveState) => {
@@ -370,7 +379,7 @@ function Editor({
                           },
                         },
                       }));
-                      setName(next.canvas.name);
+                      updateTitle(next.canvas.name);
                     });
                     await ready;
                   } else {
@@ -423,7 +432,7 @@ function Editor({
                         appState: selection,
                         captureUpdate: CaptureUpdateAction.NEVER,
                       });
-                      setName(next.canvas.name);
+                      updateTitle(next.canvas.name);
                     });
                   }
                 } catch (error) {
@@ -615,33 +624,28 @@ function Editor({
     link.click();
     ownerWindow.setTimeout(() => ownerWindow.URL.revokeObjectURL(url), 1000);
   };
+  const rename = () => {
+    editingName.current = true;
+    try {
+      const value = ownerWindow.prompt("画布名称", current.current.name);
+      if (value === null) return;
+      const name = value.trim();
+      if (!name || name.length > 60) {
+        ownerWindow.alert("画布名称需为 1–60 个字符");
+        return;
+      }
+      if (name !== current.current.name) {
+        current.current = { ...current.current, name };
+        updateTitle(name);
+        queue();
+      }
+    } finally {
+      editingName.current = false;
+      void save.resumeRemote();
+    }
+  };
   return (
     <div className="workspace" ref={node}>
-      <header className="editor-header">
-        <div className="canvas-title" style={titleTransition(id)}>
-          <input
-            aria-label="画布名称"
-            value={name}
-            maxLength={60}
-            onChange={(event) => {
-              const value = event.target.value;
-              setName(value);
-              if (value.trim()) {
-                current.current = { ...current.current, name: value.trim() };
-                queue();
-              }
-            }}
-            onFocus={() => {
-              editingName.current = true;
-            }}
-            onBlur={() => {
-              editingName.current = false;
-              setName(current.current.name);
-              void save.resumeRemote();
-            }}
-          />
-        </div>
-      </header>
       {conflict && (
         <div className="remote-update" role="status">
           <span>{conflict}</span>
@@ -667,6 +671,7 @@ function Editor({
           langCode="zh-CN"
         >
           <MainMenu>
+            <MainMenu.Item onSelect={rename}>重命名</MainMenu.Item>
             <MainMenu.Item
               icon={
                 <svg
@@ -716,7 +721,6 @@ function App({ root }: { root: HTMLElement }) {
   const id = new URL(
     root.ownerDocument.defaultView!.location.href,
   ).searchParams.get("canvas");
-  const [titleHint] = useState(() => pendingTitle(root.ownerDocument, id));
   const [loaded, setLoaded] = useState<Awaited<
     ReturnType<typeof loadCanvas>
   > | null>(null);
@@ -729,12 +733,7 @@ function App({ root }: { root: HTMLElement }) {
     let active = true;
     setError("");
     void loadCanvas(id)
-      .then(async (value) => {
-        // Keep the captured title node mounted until the native animation ends.
-        const owner = root.ownerDocument.defaultView as Window & {
-          drawsrvInitialTransition?: Promise<void>;
-        };
-        await owner.drawsrvInitialTransition;
+      .then((value) => {
         if (active) {
           setLoaded(value);
         }
@@ -767,22 +766,10 @@ function App({ root }: { root: HTMLElement }) {
       loaded={loaded}
       clientId={clientId}
       ownerWindow={root.ownerDocument.defaultView!}
+      root={root}
     />
   ) : (
     <div className="workspace">
-      <header className="editor-header">
-        <div
-          className="canvas-title"
-          style={titleHint ? titleTransition(id!) : undefined}
-        >
-          <input
-            aria-label="画布名称"
-            value={titleHint ?? ""}
-            placeholder="正在加载画布…"
-            readOnly
-          />
-        </div>
-      </header>
       <div className="canvas-loading" role="status">
         正在加载画布…
       </div>
@@ -791,5 +778,4 @@ function App({ root }: { root: HTMLElement }) {
 }
 
 const root = document.getElementById("root")!;
-// Commit the initial title before the render-blocking entry script completes.
-flushSync(() => createRoot(root).render(<App root={root} />));
+createRoot(root).render(<App root={root} />);

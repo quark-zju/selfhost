@@ -1,10 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"html"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -15,7 +13,7 @@ func TestCanvasPageTitleAndValidation(t *testing.T) {
 	id, _, _ := createCanvas(t, s)
 	name := `标题 "<& </script><script>alert(1)</script>`
 	s.pending[id] = &pendingCanvas{name: name}
-	page := `<meta name="drawsrv-canvas" content="" /><title>我的画布 | drawsrv</title><div id="root"><!--drawsrv-initial--></div>`
+	page := `<title>我的画布 | drawsrv</title><!--drawsrv-header--><div id="root"></div>`
 	handler := newHandler(s, fstest.MapFS{"index.html": {Data: []byte(page)}})
 	get := func(etag string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("GET", "/?canvas="+id, nil)
@@ -29,13 +27,11 @@ func TestCanvasPageTitleAndValidation(t *testing.T) {
 		t.Fatalf("response: %d %v", w.Code, w.Header())
 	}
 	body := w.Body.String()
-	if strings.Contains(body, "<script>") || !strings.Contains(body, `view-transition-name:canvas-title-`+id) || !strings.Contains(body, `value="`+html.EscapeString(name)+`"`) {
+	if strings.Contains(body, "<script>") || !strings.Contains(body, `view-transition-name:canvas-title-`+id) || !strings.Contains(body, `>`+html.EscapeString(name)+`</h1>`) {
 		t.Fatal(body)
 	}
-	match := regexp.MustCompile(`<meta name="drawsrv-canvas" content="([^"]*)"`).FindStringSubmatch(body)
-	var hint struct{ ID, Name string }
-	if len(match) != 2 || json.Unmarshal([]byte(html.UnescapeString(match[1])), &hint) != nil || hint.ID != id || hint.Name != name {
-		t.Fatalf("metadata: %#v %v", hint, match)
+	if strings.Index(body, `id="canvas-title"`) > strings.Index(body, `id="root"`) {
+		t.Fatal("title must stay outside the React root")
 	}
 	etag := w.Header().Get("ETag")
 	if etag == "" || get(etag).Code != 304 {
