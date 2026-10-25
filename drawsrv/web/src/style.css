@@ -110,7 +110,13 @@ time {
   padding: 16px 18px;
   text-decoration: none;
   color: inherit;
-  border-radius: 9px;
+}
+.canvas-list li:first-child .canvas-row {
+  border-radius: 9px 9px 0 0;
+}
+.canvas-list li:last-child .canvas-row {
+  border-bottom-left-radius: 9px;
+  border-bottom-right-radius: 9px;
 }
 .canvas-row:hover {
   background: #f0eefb;
