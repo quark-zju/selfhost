@@ -38,6 +38,7 @@ type canvasMetadata struct {
 type storeState struct {
 	Version  int                       `json:"version"`
 	Canvases map[string]canvasMetadata `json:"canvases"`
+	Trash    map[string]canvasMetadata `json:"trash,omitempty"`
 }
 type store struct {
 	mu                  sync.Mutex
@@ -270,9 +271,19 @@ func (s *store) loadState() error {
 		}
 	}
 	// Verify the manifest against the tree without reading all canvas bodies.
-	tree, err := s.git("ls-tree", "-z", s.head)
+	tree, err := s.git("ls-tree", "-r", "-z", s.head)
 	if err != nil {
 		return err
+	}
+	expected := make(map[string]string, len(state.Canvases)+len(state.Trash))
+	for id, meta := range state.Canvases {
+		expected[id+".json"] = meta.Blob
+	}
+	for name, meta := range state.Trash {
+		if _, err := trashDeletedAt(name); err != nil || !commitID.MatchString(meta.Blob) || strings.TrimSpace(meta.Name) == "" || len(meta.Name) > 200 || meta.Updated.IsZero() {
+			return errors.New("invalid committed trash metadata")
+		}
+		expected["trash/"+name] = meta.Blob
 	}
 	count := 0
 	for _, entry := range bytes.Split(tree, []byte{0}) {
@@ -291,14 +302,13 @@ func (s *store) loadState() error {
 		if path == statePath {
 			continue
 		}
-		id := strings.TrimSuffix(path, ".json")
-		meta, ok := state.Canvases[id]
-		if !ok || path != id+".json" || info[2] != meta.Blob {
+		blob, ok := expected[path]
+		if !ok || info[2] != blob {
 			return errors.New("canvas tree does not match committed metadata")
 		}
 		count++
 	}
-	if count != len(state.Canvases) {
+	if count != len(expected) {
 		return errors.New("canvas missing from committed tree")
 	}
 	s.state = state
@@ -400,7 +410,7 @@ func (s *store) saveAt(id string, body, previous []byte, message string, updated
 	if err != nil {
 		return err
 	}
-	next := storeState{Version: 1, Canvases: make(map[string]canvasMetadata, len(s.state.Canvases)+1)}
+	next := storeState{Version: 1, Canvases: make(map[string]canvasMetadata, len(s.state.Canvases)+1), Trash: s.state.Trash}
 	for key, meta := range s.state.Canvases {
 		next.Canvases[key] = meta
 	}
@@ -432,6 +442,22 @@ func (s *store) publish(next storeState, message string) error {
 	var tree bytes.Buffer
 	for _, key := range paths {
 		fmt.Fprintf(&tree, "100644 blob %s\t%s.json\x00", next.Canvases[key].Blob, key)
+	}
+	if len(next.Trash) > 0 {
+		names := make([]string, 0, len(next.Trash))
+		for name := range next.Trash {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		var trashTree bytes.Buffer
+		for _, name := range names {
+			fmt.Fprintf(&trashTree, "100644 blob %s\t%s\x00", next.Trash[name].Blob, name)
+		}
+		out, err := s.gitInput(&trashTree, "mktree", "-z")
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(&tree, "040000 tree %s\ttrash\x00", strings.TrimSpace(string(out)))
 	}
 	fmt.Fprintf(&tree, "100644 blob %s\t%s\x00", stateBlob, statePath)
 	out, err := s.gitInput(&tree, "mktree", "-z")

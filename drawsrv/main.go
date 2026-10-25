@@ -99,9 +99,10 @@ func run() (result error) {
 	go func() {
 		defer close(done)
 		var workers sync.WaitGroup
-		workers.Add(2)
+		workers.Add(3)
 		go func() { defer workers.Done(); s.runMaintenance(ctx, *maintenanceDelay, log.Printf) }()
 		go func() { defer workers.Done(); s.runPersistence(ctx, log.Printf) }()
+		go func() { defer workers.Done(); s.runTrashCleanup(ctx, log.Printf) }()
 		workers.Wait()
 	}()
 	defer func() { stop(); <-done }()

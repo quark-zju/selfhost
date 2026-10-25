@@ -95,7 +95,7 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	allowed := "GET, PUT"
+	allowed := "GET, PUT, DELETE"
 	if collection {
 		allowed = "GET, POST"
 	} else if action == "history" || action == "status" || action == "events" {
@@ -178,6 +178,15 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Header.Get("If-Match") != revision(current) {
 		http.Error(w, "canvas changed; export your changes then reload", 412)
+		return
+	}
+	if r.Method == "DELETE" {
+		if err := s.trashCanvas(id, current, time.Now().UTC()); err != nil {
+			log.Print(err)
+			http.Error(w, "cannot delete canvas", 500)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if action == "flush" {

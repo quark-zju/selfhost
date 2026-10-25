@@ -226,7 +226,9 @@ func TestRejectInvalidWrites(t *testing.T) {
 		{"PUT", path, strings.Repeat("x", int(s.limit)+1), etag, 413},
 		{"POST", path + "/restore", `{"commit":"--help"}`, etag, 400},
 		{"GET", "/api/canvases/../../.git/config", "", "", 404},
-		{"DELETE", path, "", etag, 405},
+		{"PATCH", path, "", etag, 405},
+		{"DELETE", path, "", "", 412},
+		{"DELETE", path + "/history", "", etag, 405},
 		{"POST", "/api/canvases", `{"name":" "}`, "", 400},
 	} {
 		w := request(s, tc.method, tc.path, tc.body, tc.tag)
