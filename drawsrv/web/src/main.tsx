@@ -117,17 +117,18 @@ function Gallery() {
           }}
         />
       </div>
-      <div className="cards">
+      <ul className="canvas-list" aria-label="画布列表">
         {visible.items.map((canvas) => (
-          <a className="card" key={canvas.id} href={`/?canvas=${canvas.id}`}>
-            <span className="card-icon" aria-hidden>
-              ▱
-            </span>
-            <strong>{canvas.name}</strong>
-            <time>{new Date(canvas.updated).toLocaleString()}</time>
-          </a>
+          <li key={canvas.id}>
+            <a className="canvas-row" href={`/?canvas=${canvas.id}`}>
+              <strong>{canvas.name}</strong>
+              <time dateTime={canvas.updated}>
+                {new Date(canvas.updated).toLocaleString()}
+              </time>
+            </a>
+          </li>
         ))}
-      </div>
+      </ul>
       {canvases && visible.total === 0 && (
         <p className="empty">
           {query.trim()

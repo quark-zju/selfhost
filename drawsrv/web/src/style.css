@@ -88,33 +88,40 @@ time {
   gap: 12px;
   margin: 16px 0;
 }
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-  gap: 16px;
+.canvas-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: white;
+  border: 1px solid #e5e3ef;
+  border-radius: 10px;
 }
-.card {
+.canvas-list:empty {
+  display: none;
+}
+.canvas-list li + li {
+  border-top: 1px solid #e5e3ef;
+}
+.canvas-row {
   display: flex;
-  flex-direction: column;
-  gap: 18px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px 18px;
   text-decoration: none;
   color: inherit;
-  background: white;
-  padding: 22px;
-  border: 1px solid #e5e3ef;
-  border-radius: 12px;
-  transition: border-color 0.15s;
+  border-radius: 9px;
 }
-.card:hover {
-  border-color: #8d7de1;
+.canvas-row:hover {
+  background: #f0eefb;
 }
-.card strong {
+.canvas-row strong {
+  min-width: 0;
   overflow-wrap: anywhere;
+  font-weight: 500;
 }
-.card-icon {
-  color: #6c5cce;
-  font-size: 44px;
-  height: 58px;
+.canvas-row time {
+  flex-shrink: 0;
 }
 .empty {
   text-align: center;
@@ -156,6 +163,11 @@ time {
 }
 @media (max-width: 600px) {
   .editor-header {
+    gap: 6px;
+  }
+  .canvas-row {
+    align-items: flex-start;
+    flex-direction: column;
     gap: 6px;
   }
   .list-heading input {
