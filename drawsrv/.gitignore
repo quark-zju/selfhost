@@ -5,3 +5,7 @@
 /web/dist/
 /web/public/fonts/
 .DS_Store
+
+# Fonts are served by the public CDN, never bundled locally.
+/web/dist/fonts/
+/web/dist/**/*.woff2
