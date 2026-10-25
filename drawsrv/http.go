@@ -25,6 +25,8 @@ func newHandler(s *store, static fs.FS) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/canvases", s.serve)
 	mux.HandleFunc("/api/canvases/", s.serve)
+	mux.HandleFunc("/api/trash", s.serve)
+	mux.HandleFunc("/api/trash/", s.serve)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 	files := http.FileServerFS(static)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -78,10 +80,25 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", "application/json")
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/canvases"), "/")
+	trash := r.URL.Path == "/api/trash" || strings.HasPrefix(r.URL.Path, "/api/trash/")
+	prefix := "/api/canvases"
+	if trash {
+		prefix = "/api/trash"
+	}
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, prefix), "/")
 	collection := len(parts) == 1 && parts[0] == ""
 	id, action := "", ""
-	if !collection {
+	if !collection && trash {
+		if len(parts) != 3 || parts[2] != "restore" {
+			http.NotFound(w, r)
+			return
+		}
+		if _, err := trashDeletedAt(parts[1]); err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		id, action = parts[1], "trash-restore"
+	} else if !collection {
 		if len(parts) < 2 || len(parts) > 3 || !canvasID.MatchString(parts[1]) {
 			http.NotFound(w, r)
 			return
@@ -102,6 +119,12 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 		allowed = "GET"
 	} else if action == "restore" || action == "flush" || action == "changes" {
 		allowed = "POST"
+	}
+	if trash {
+		allowed = "GET"
+		if !collection {
+			allowed = "POST"
+		}
 	}
 	if !strings.Contains(", "+allowed+",", ", "+r.Method+",") {
 		w.Header().Set("Allow", allowed)
@@ -136,6 +159,10 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	if s.failed || s.closed {
 		http.Error(w, "storage unavailable; restart required", 503)
+		return
+	}
+	if trash {
+		s.serveTrashLocked(w, r, id)
 		return
 	}
 	if collection {

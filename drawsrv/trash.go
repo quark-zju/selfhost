@@ -55,6 +55,36 @@ func (s *store) trashCanvas(id string, body []byte, now time.Time) error {
 	return nil
 }
 
+// Restore the original ID on the same linear history, without overwriting an
+// active canvas. Expired entries cannot be revived between cleanup checks.
+func (s *store) restoreTrash(name string, now time.Time) (string, error) {
+	meta, ok := s.state.Trash[name]
+	deleted, err := trashDeletedAt(name)
+	if !ok || err != nil || !now.Before(deleted.Add(trashRetention)) {
+		return "", errCanvasNotFound
+	}
+	_, tail, _ := strings.Cut(name, "_")
+	id := strings.TrimSuffix(tail, ".json")
+	if _, exists := s.state.Canvases[id]; exists {
+		return "", errCanvasExists
+	}
+	body, err := s.readBlob(meta.Blob)
+	if err != nil {
+		return "", err
+	}
+	next := s.copyState()
+	delete(next.Trash, name)
+	meta.Updated = now.UTC()
+	next.Canvases[id] = meta
+	if err := s.publish(next, "canvas: restore from trash "+id); err != nil {
+		return "", err
+	}
+	s.notifyChange(id, body, true, "")
+	return id, nil
+}
+
+var errCanvasExists = errors.New("canvas already exists")
+
 func (s *store) cleanTrash(now time.Time) error {
 	if !s.mu.TryLock() {
 		return nil
