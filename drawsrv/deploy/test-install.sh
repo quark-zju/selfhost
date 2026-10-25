@@ -12,6 +12,12 @@ chmod 755 "$stage/project/bin/drawsrv"
 printf 'first index\n' > "$stage/project/web/dist/index.html"
 printf 'first asset\n' > "$stage/project/web/dist/assets/v1.js"
 cd "$stage/project"
+# The default build must reuse committed frontend files, even without npm.
+make build GO=true NPM=false
+if make check-web WEB_BUILD="$stage/missing" >/dev/null 2>&1; then
+    echo 'Missing frontend assets were accepted' >&2
+    exit 1
+fi
 make install install-config install-systemd SUDO= SYSTEMCTL=false DESTDIR="$stage/root"
 test -x "$stage/root/usr/local/bin/drawsrv"
 test ! -e "$stage/root/var/lib/drawsrv"
@@ -43,4 +49,6 @@ grep -q '^StateDirectoryMode=0700$' "$unit"
 grep -q -- '-data /var/lib/drawsrv ' "$unit"
 grep -q 'EnvironmentFile=-/opt/custom/etc/drawsrv.env' "$unit"
 if grep -q "$stage/custom" "$unit"; then echo 'DESTDIR leaked into runtime unit' >&2; exit 1; fi
+make clean
+test -f web/dist/index.html
 echo 'Deployment recipes passed: prebuilt install, config preservation, retained assets, custom paths and no systemctl in staging.'

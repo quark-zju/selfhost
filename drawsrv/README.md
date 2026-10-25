@@ -14,7 +14,9 @@
 
 ## 本地构建与运行
 
-构建需要 Go 1.24+、Git 2.36+、Node.js 22.18+（或 24+）、npm。VPS 运行时只需要编译后的 Go 程序、前端静态文件和系统 Git。
+仓库包含已编译的 `web/dist` 静态页面。默认 `make build` 只检查这些文件并编译 Go，需要 Go 1.24+ 和 Git 2.36+，不运行 npm。VPS 运行时只需要编译后的 Go 程序、前端静态文件和系统 Git。
+
+修改前端源码后，在开发机使用 Node.js 22.18+（或 24+）与 npm 执行 `make web`，并将更新后的 `web/dist` 与源码一起提交。`make clean` 会保留已提交的网页静态资源。
 
 ```sh
 cd drawsrv
@@ -32,25 +34,20 @@ make test
 
 ## 部署到 Linux VPS
 
-参考同仓库 picosrv / picomx，Makefile 提供账号、配置和 systemd 安装入口。为了避免小内存 VPS 执行前端打包，构建与安装分开：`make deploy` 只安装已有产物，不调用 Go 或 npm。
-
-在本地或 CI 生成部署包：
+参考同仓库 picosrv / picomx，Makefile 提供账号、配置和 systemd 安装入口。直接在 VPS 拉取仓库后，使用已提交的静态页面编译并安装，无需安装 Node.js 或 npm：
 
 ```sh
-make release                       # 默认 Linux amd64
-make release TARGET_ARCH=arm64     # ARM64 VPS
-```
-
-将 `dist/drawsrv-linux-amd64.tar.gz`（或 arm64 包）上传到 VPS。包内包含 Go 程序、全部静态文件、部署模板和 Makefile，VPS 只需 Git 2.36+、make、tar、sudo 和 Linux 账号/systemd 工具：
-
-```sh
-tar -xzf drawsrv-linux-amd64.tar.gz
 cd drawsrv
+make build                         # 只编译 Go，使用仓库中的 web/dist
 make deploy
 sudoedit /etc/drawsrv/drawsrv.env
 make enable                        # systemctl enable --now drawsrv.service
 make status
 ```
+
+`make deploy` 只安装现有产物，不调用 Go 或 npm。VPS 构建/部署需要 Go 1.24+、Git 2.36+、make、sudo 和 Linux 账号/systemd 工具。也可在其他机器交叉编译 Go，静态页面不依赖 CPU 架构。
+
+如需传输独立部署包，可选执行 `make release`（默认 Linux amd64，支持 `TARGET_ARCH=arm64`）；它也使用现有 `web/dist`，不执行 npm。发布包和 Go 二进制不提交到仓库。
 
 `make deploy` 创建系统用户/组并安装文件、刷新 systemd 并启用开机自启，但不会自动启动或重启服务。配置文件已存在时保留原文件。以 root 身份安装时可设置 `SUDO=`。
 
@@ -68,7 +65,7 @@ make status
 
 配置示例见 [drawsrv.env.example](deploy/drawsrv.env.example)，支持调整监听地址、画布上限、读取缓存/待落盘缓冲预算、Git 提交空闲时间、maintenance 延迟及 Go 软内存目标。修改配置后运行 `make restart`。
 
-升级时在新的部署包目录执行 `make deploy && make restart`。程序经临时文件原子替换；静态资源先复制，最后原子发布 `index.html`，保留旧的哈希资源以便已打开的页面继续使用。数据仓库和已有 `.env` 配置不被覆盖；unit 会从模板重新安装，systemd 个性化配置请放在 drop-in 中。旧静态资源不自动删除，可在停服后按需清理，避免长期多次部署占用磁盘。
+升级时拉取最新仓库后执行 `make build && make deploy && make restart`。程序经临时文件原子替换；静态资源先复制，最后原子发布 `index.html`，保留旧的哈希资源以便已打开的页面继续使用。数据仓库和已有 `.env` 配置不被覆盖；unit 会从模板重新安装，systemd 个性化配置请放在 drop-in 中。旧静态资源不自动删除，可在停服后按需清理，避免长期多次部署占用磁盘。
 
 可单独执行 `make install`、`make setup-user`、`make install-config`、`make install-systemd`。通过 `PREFIX`、`SHARE_DIR`、`CONFIG_DIR`、`SYSTEMD_DIR`、`SERVICE_USER`、`SERVICE_GROUP` 覆盖安装位置和账号，生成的 unit 使用相应运行路径。`DESTDIR` 用于离线打包/暂存安装，不进入 unit 内的运行路径，也不会调用 systemctl。
 

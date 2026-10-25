@@ -22,9 +22,10 @@ SUDO ?= sudo
 SYSTEMCTL ?= systemctl
 DESTDIR ?=
 
-.PHONY: build build-go web release test test-deploy fmt clean help check-git check-artifacts install setup-user install-config install-systemd deploy enable restart status
+.PHONY: build build-go web release test test-deploy fmt clean help check-git check-web check-artifacts install setup-user install-config install-systemd deploy enable restart status
 
-build: web build-go
+# Committed frontend assets let a VPS build with Go alone.
+build: check-web build-go
 
 build-go:
 	mkdir -p bin
@@ -36,7 +37,7 @@ web:
 
 # This bundle includes prebuilt artifacts and deployment recipes, so installing
 # it on the VPS needs neither Go nor Node.js. Compile on a larger machine/CI.
-release: web
+release: check-web
 	@set -eu; \
 	stage=$$(mktemp -d); \
 	trap 'rm -rf "$$stage"' 0 HUP INT TERM; \
@@ -62,9 +63,13 @@ check-git:
 		echo 'Git 2.36+ is required on the runtime host; install Git first' >&2; exit 1; \
 	fi
 
-check-artifacts:
-	@test -x $(BUILD_OUTPUT) && test -f $(WEB_BUILD)/index.html || \
-		{ echo 'Missing build artifacts: run make build locally or unpack a release bundle' >&2; exit 1; }
+check-web:
+	@test -f $(WEB_BUILD)/index.html || \
+		{ echo 'Missing frontend assets: run make web on a build machine and commit web/dist'; exit 1; }
+
+check-artifacts: check-web
+	@test -x $(BUILD_OUTPUT) || \
+		{ echo 'Missing Go binary: run make build or unpack a release bundle'; exit 1; }
 
 # Deliberately does not depend on build: a small VPS installs existing artifacts.
 install: check-git check-artifacts
@@ -127,11 +132,12 @@ status:
 	$(SUDO) $(SYSTEMCTL) status drawsrv.service
 
 clean:
-	rm -rf bin web/dist $(RELEASE_DIR)
+	rm -rf bin $(RELEASE_DIR)
 
 help:
-	@echo 'make build           Build frontend and native Go binary locally'
-	@echo 'make release         Build Linux amd64 deployment archive (TARGET_ARCH=arm64 supported)'
+	@echo 'make build           Build native Go binary using committed frontend (no Node.js/npm)'
+	@echo 'make web             Rebuild frontend with npm; commit web/dist with source changes'
+	@echo 'make release         Optional Linux amd64 archive using committed frontend (TARGET_ARCH=arm64 supported)'
 	@echo 'make deploy          Install prebuilt artifacts, account, config and systemd unit'
 	@echo 'make enable          Enable and start the installed service'
 	@echo 'make restart         Restart after an upgrade/config change'
