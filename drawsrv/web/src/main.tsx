@@ -600,15 +600,6 @@ function Editor({
   return (
     <div className="workspace" ref={node}>
       <header className="editor-header">
-        <button
-          onClick={async () => {
-            if (await save.flush()) {
-              node.current!.ownerDocument.defaultView?.location.assign("/");
-            }
-          }}
-        >
-          ← 画布
-        </button>
         <input
           aria-label="画布名称"
           value={name}
