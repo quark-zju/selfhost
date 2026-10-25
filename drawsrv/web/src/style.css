@@ -118,8 +118,9 @@ time {
   border-bottom-left-radius: 9px;
   border-bottom-right-radius: 9px;
 }
-.canvas-row:hover {
-  background: #f0eefb;
+a.canvas-row:hover,
+a.canvas-row:hover time {
+  color: #5948ba;
 }
 .canvas-row strong {
   min-width: 0;
@@ -302,9 +303,6 @@ time {
 }
 .restore-canvas {
   color: #595469;
-}
-.trash-row:hover {
-  background: transparent;
 }
 .hold-progress {
   stroke-dasharray: 100;
