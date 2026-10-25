@@ -1,5 +1,5 @@
 #!/bin/sh
-# Exercise the same recipes shipped in release bundles, with no root/systemd.
+# Exercise the deployment recipes with no root/systemd.
 set -eu
 source_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 stage=$(mktemp -d)

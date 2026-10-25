@@ -6,11 +6,6 @@ BUILD_OUTPUT := bin/$(BINARY)
 WEB_BUILD := web/dist
 GO ?= go
 NPM ?= npm
-TARGET_OS ?= linux
-# Follow the build host instead of guessing amd64: arm64 machines are common,
-# and a mismatched release would only fail when the VPS starts it.
-TARGET_ARCH ?= $(shell $(GO) env GOARCH)
-RELEASE_DIR ?= dist
 PREFIX ?= /usr/local/bin
 INSTALL_PATH := $(PREFIX)/$(BINARY)
 SHARE_DIR ?= /usr/local/share/drawsrv
@@ -24,7 +19,7 @@ SUDO ?= sudo
 SYSTEMCTL ?= systemctl
 DESTDIR ?=
 
-.PHONY: build build-go web release test test-deploy fmt clean help check-git check-web check-artifacts install setup-user install-config install-systemd deploy enable restart status
+.PHONY: build build-go web test test-deploy fmt clean help check-git check-web check-artifacts install setup-user install-config install-systemd deploy enable restart status
 
 # Committed frontend assets let a VPS build with Go alone.
 build: check-web build-go
@@ -36,19 +31,6 @@ build-go:
 web:
 	$(NPM) --prefix web ci
 	$(NPM) --prefix web run build
-
-# This bundle includes prebuilt artifacts and deployment recipes, so installing
-# it on the VPS needs neither Go nor Node.js. Compile on a larger machine/CI.
-release: check-web
-	@set -eu; \
-	stage=$$(mktemp -d); \
-	trap 'rm -rf "$$stage"' 0 HUP INT TERM; \
-	mkdir -p "$$stage/drawsrv/bin" "$$stage/drawsrv/web" "$(RELEASE_DIR)"; \
-	CGO_ENABLED=0 GOOS=$(TARGET_OS) GOARCH=$(TARGET_ARCH) $(GO) build -trimpath -ldflags='-s -w' -o "$$stage/drawsrv/bin/drawsrv" .; \
-	cp -R $(WEB_BUILD) "$$stage/drawsrv/web/dist"; \
-	cp -R deploy "$$stage/drawsrv/deploy"; \
-	cp Makefile README.md "$$stage/drawsrv/"; \
-	tar -czf "$(RELEASE_DIR)/drawsrv-$(TARGET_OS)-$(TARGET_ARCH).tar.gz" -C "$$stage" drawsrv
 
 test:
 	$(GO) test -race ./...
@@ -71,7 +53,7 @@ check-web:
 
 check-artifacts: check-web
 	@test -x $(BUILD_OUTPUT) || \
-		{ echo 'Missing Go binary: run make build or unpack a release bundle'; exit 1; }
+		{ echo 'Missing Go binary: run make build'; exit 1; }
 
 # Deliberately does not depend on build: a small VPS installs existing artifacts.
 install: check-git check-artifacts
@@ -134,12 +116,11 @@ status:
 	$(SUDO) $(SYSTEMCTL) status drawsrv.service
 
 clean:
-	rm -rf bin $(RELEASE_DIR)
+	rm -rf bin
 
 help:
 	@echo 'make build           Build native Go binary using committed frontend (no Node.js/npm)'
 	@echo 'make web             Rebuild frontend with npm; commit web/dist with source changes'
-	@echo 'make release         Optional Linux archive using committed frontend (TARGET_ARCH defaults to host arch)'
 	@echo 'make deploy          Install prebuilt artifacts, account, config and systemd unit'
 	@echo 'make enable          Enable and start the installed service'
 	@echo 'make restart         Restart after an upgrade/config change'

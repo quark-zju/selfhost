@@ -48,9 +48,7 @@ make enable                        # systemctl enable --now drawsrv.service
 make status
 ```
 
-`make deploy` 只安装现有产物，不调用 Go 或 npm。VPS 构建/部署需要 Go 1.24+、Git 2.36+、make、sudo 和 Linux 账号/systemd 工具。也可在其他机器交叉编译 Go，静态页面不依赖 CPU 架构。
-
-如需传输独立部署包，可选执行 `make release`（目标操作系统固定为 Linux，架构默认跟随构建机的 `go env GOARCH`，可用 `TARGET_ARCH=amd64` 或 `TARGET_ARCH=arm64` 覆盖）；它也使用现有 `web/dist`，不执行 npm。发布包和 Go 二进制不提交到仓库。
+`make deploy` 只安装现有产物，不调用 Go 或 npm。VPS 构建/部署需要 Go 1.24+、Git 2.36+、make、sudo 和 Linux 账号/systemd 工具。`make build` 直接为运行机器原生编译，无需交叉编译；静态页面不依赖 CPU 架构。
 
 `make deploy` 创建系统用户/组并安装文件、刷新 systemd 并启用开机自启，但不会自动启动或重启服务。配置文件已存在时保留原文件。以 root 身份安装时可设置 `SUDO=`。
 
