@@ -1,6 +1,5 @@
-import { t } from "./i18n.ts";
+import { locale } from "./locales/index.ts";
 import type { AppState } from "@excalidraw/excalidraw/types";
-
 // sessionStorage is scoped to this tab and canvas: separate clients can pan,
 // zoom or change presentation settings without producing a shared revision.
 export class LocalAppStateStore {
@@ -10,7 +9,6 @@ export class LocalAppStateStore {
   private pending: string | null = null;
   private timer: number | undefined;
   private failed = false;
-
   constructor(
     id: string,
     owner: Pick<Window, "sessionStorage" | "setTimeout" | "clearTimeout">,
@@ -58,7 +56,7 @@ export class LocalAppStateStore {
       this.failed = false;
     } catch {
       if (!this.failed) {
-        console.log(t("[drawsrv:local] 无法保存本标签页的 appState"));
+        console.log(locale.Local.Unavailable);
       }
       this.failed = true;
     }

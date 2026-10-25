@@ -1,58 +1,56 @@
-import { t } from "./i18n.ts";
+import { locale } from "./locales/index.ts";
 import type {
   ExcalidrawInitialDataState,
   LibraryItems,
 } from "@excalidraw/excalidraw/types";
 import { SaveError } from "./autosave";
 import { normalizeElements, normalizeLibraryItems } from "./normalize";
-
 export type Canvas = {
   name: string;
   elements: NonNullable<ExcalidrawInitialDataState["elements"]>;
   files: NonNullable<ExcalidrawInitialDataState["files"]>;
   libraryItems: LibraryItems;
 };
-export type CanvasItem = { id: string; name: string; updated: string };
+export type CanvasItem = {
+  id: string;
+  name: string;
+  updated: string;
+};
 export const canvasURL = (id: string) =>
   `/api/canvases/${encodeURIComponent(id)}`;
 export async function checked(response: Response) {
   if (response.status === 412) {
-    throw new SaveError(
-      t("此画布已被其他页面修改。请导出当前内容，再刷新页面。"),
-      true,
-    );
+    throw new SaveError(locale.Errors.RemoteChanged, true);
   }
   if (!response.ok) {
     const hint =
       response.status === 413
-        ? t("画布超过服务端大小限制")
+        ? locale.Errors.TooLarge
         : response.status === 401 || response.status === 403
-          ? t("请检查反代登录状态")
-          : t("请重试或导出备份");
-    throw new SaveError(
-      t("请求失败 ({status})：{hint}", { status: response.status, hint }),
-    );
+          ? locale.Errors.Auth
+          : locale.Errors.RetryOrBackup;
+    throw new SaveError(locale.Errors.RequestFailed(response.status, hint));
   }
   return response;
 }
 export function version(response: Response) {
   const etag = response.headers.get("ETag");
   if (!etag) {
-    throw new SaveError(t("服务器未返回版本，请导出当前内容后刷新"), true);
+    throw new SaveError(locale.Errors.MissingVersion, true);
   }
   return etag;
 }
 export function saveResult(response: Response) {
   const value = response.headers.get("X-Drawsrv-Persisted");
   if (value !== "true" && value !== "false") {
-    throw new SaveError(t("服务器未返回保存状态，请导出当前内容后刷新"), true);
+    throw new SaveError(locale.Errors.MissingSaveStatus, true);
   }
   const hash = response.headers.get("X-Drawsrv-Hash");
   if (!hash || !/^[a-f0-9]{64}$/.test(hash))
-    throw new SaveError(t("服务器未返回有效内容 HASH，请导出备份后刷新"), true);
+    throw new SaveError(locale.Errors.InvalidHash, true);
   const revision = response.headers.get("X-Drawsrv-Revision");
   if (!revision) {
-    throw new SaveError(t("服务器未返回修订标识，请导出当前内容后刷新"), true);
+    throw new SaveError(locale.Errors.MissingRevision, true);
   }
   return {
     etag: version(response),

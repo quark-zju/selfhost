@@ -17,6 +17,8 @@
 
 仓库包含已编译的 `web/dist` 静态页面。默认 `make build` 只检查这些文件并编译 Go，需要 Go 1.24+ 和 Git 2.36+，不运行 npm。VPS 运行时只需要编译后的 Go 程序、前端静态文件和系统 Git。
 
+drawsrv 自身的翻译位于 `web/src/locales/`：`types.ts` 独立定义语言无关的 `Locale` 接口，中英文各自完整实现，业务代码直接访问 `locale.Gallery.Title` 等语义字段。参数文案使用 `locale.Gallery.Count(count)` 等有类型的函数；不使用原文 key、占位符替换或语言间继承。
+
 修改前端源码后，在开发机使用 Node.js 22.18+（或 24+）与 npm 执行 `make web`，并将更新后的 `web/dist` 与源码一起提交。`make clean` 会保留已提交的网页静态资源。
 
 ```sh
