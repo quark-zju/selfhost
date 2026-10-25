@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import {
   Excalidraw,
+  Footer,
   MainMenu,
   serializeAsJSON,
   restoreElements,
@@ -169,6 +170,7 @@ function Editor({
   clientId: string;
   ownerWindow: Window;
 }) {
+  const tooltipId = useId();
   const [localState] = useState(() => new LocalAppStateStore(id, ownerWindow));
   const [scene, setScene] = useState(() => ({
     key: 0,
@@ -597,6 +599,38 @@ function Editor({
     link.click();
     ownerWindow.setTimeout(() => ownerWindow.URL.revokeObjectURL(url), 1000);
   };
+  const renderSaveButton = (mobile = false) => (
+    <button
+      className={`server-save-button${mobile ? " server-save-button-mobile" : ""}`}
+      type="button"
+      aria-label="保存到服务器"
+      aria-describedby={`${tooltipId}-${mobile ? "mobile" : "footer"}-save`}
+      onClick={() => void save.flush()}
+    >
+      <svg
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <path d="M5 3h12l4 4v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+        <path d="M7 3v6h10V3M7 21v-8h10v8" />
+      </svg>
+      <span
+        className="toolbar-tooltip"
+        id={`${tooltipId}-${mobile ? "mobile" : "footer"}-save`}
+        role="tooltip"
+      >
+        保存到服务器
+      </span>
+    </button>
+  );
   return (
     <div className="workspace" ref={node}>
       <header className="editor-header">
@@ -621,51 +655,6 @@ function Editor({
             void save.resumeRemote();
           }}
         />
-        <button
-          className="icon-button"
-          type="button"
-          aria-label="保存"
-          title="保存"
-          onClick={() => void save.flush()}
-        >
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.75"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-            focusable="false"
-          >
-            <path d="M5 3h12l4 4v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
-            <path d="M7 3v6h10V3M7 21v-8h10v8" />
-          </svg>
-        </button>
-        <button
-          className="icon-button"
-          type="button"
-          aria-label="下载备份"
-          title="下载备份（.excalidraw）"
-          onClick={exportBackup}
-        >
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.75"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-            focusable="false"
-          >
-            <path d="M12 3v12m-5-5 5 5 5-5M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" />
-          </svg>
-        </button>
       </header>
       {conflict && (
         <div className="remote-update" role="status">
@@ -689,8 +678,12 @@ function Editor({
           }}
           onChange={onChange}
           onLibraryChange={onLibraryChange}
+          renderTopRightUI={(isMobile) =>
+            isMobile ? renderSaveButton(true) : null
+          }
           langCode="zh-CN"
         >
+          <Footer>{renderSaveButton()}</Footer>
           <MainMenu>
             <MainMenu.DefaultItems.LoadScene />
             <MainMenu.DefaultItems.SaveToActiveFile />
