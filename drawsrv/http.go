@@ -15,6 +15,8 @@ import (
 	"time"
 )
 
+var immutableAsset = regexp.MustCompile(`^/assets/[^/]+-[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9]+$`)
+
 var clientIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
 
 func newHandler(s *store, static fs.FS) http.Handler {
@@ -32,6 +34,11 @@ func newHandler(s *store, static fs.FS) http.Handler {
 		}
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if immutableAsset.MatchString(r.URL.Path) {
+			if info, err := fs.Stat(static, strings.TrimPrefix(r.URL.Path, "/")); err == nil && !info.IsDir() {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			}
+		}
 		files.ServeHTTP(w, r)
 	})
 	return mux
