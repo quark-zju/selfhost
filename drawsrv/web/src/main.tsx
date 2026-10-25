@@ -40,6 +40,7 @@ import { normalizeElements, normalizeLibraryItems } from "./normalize";
 import { serializeCanvas, diffCanvas, effectiveHash } from "./content";
 import { reuseRemoteElements, hasChangedExistingFiles } from "./remoteScene";
 import { paginateCanvases } from "./canvasList";
+import { HoldDelete } from "./HoldDelete";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : locale.Common.RequestFailed;
@@ -69,68 +70,147 @@ const titleTransition = (id: string) => ({
 });
 
 function Gallery() {
+  const [view, setView] = useState<"canvases" | "trash">("canvases");
   const [canvases, setCanvases] = useState<CanvasItem[] | null>(null);
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [deleting, setDeleting] = useState<string | null>(null);
+  const [acting, setActing] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
+  const [attempt, setAttempt] = useState(0);
+  const trash = view === "trash";
   const visible = useMemo(
     () => paginateCanvases(canvases ?? [], query, page),
     [canvases, query, page],
   );
-  const load = () => {
+  useEffect(() => {
+    const controller = new AbortController();
     setError("");
-    void fetch("/api/canvases", { cache: "no-store" })
+    setCanvases(null);
+    void fetch(trash ? "/api/trash" : "/api/canvases", {
+      cache: "no-store",
+      signal: controller.signal,
+    })
       .then(checked)
       .then((r) => r.json())
-      .then(setCanvases)
-      .catch((e) => setError(message(e)));
+      .then((items) => {
+        if (!controller.signal.aborted) setCanvases(items);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setError(message(error));
+      });
+    return () => controller.abort();
+  }, [trash, attempt]);
+  const changeView = (next: typeof view) => {
+    if (next === view) return;
+    setView(next);
+    setCanvases(null);
+    setError("");
+    setQuery("");
+    setPage(1);
   };
-  useEffect(load, []);
+  const act = async (canvas: CanvasItem) => {
+    if (acting !== null) return;
+    setActing(canvas.id);
+    setError("");
+    try {
+      if (trash) {
+        await checked(
+          await fetch(`/api/trash/${encodeURIComponent(canvas.id)}/restore`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          }),
+        );
+      } else {
+        const latest = await loadCanvas(canvas.id);
+        const response = await fetch(canvasURL(canvas.id), {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            "If-Match": latest.etag,
+          },
+        });
+        if (response.status === 412)
+          throw new Error(locale.Gallery.DeleteChanged);
+        await checked(response);
+      }
+      setCanvases(
+        (items) => items?.filter((item) => item.id !== canvas.id) ?? null,
+      );
+    } catch (error) {
+      setError(message(error));
+    } finally {
+      setActing(null);
+    }
+  };
   return (
     <main className="gallery">
-      <h1>{locale.Gallery.Title}</h1>
-      <form
-        className="create"
-        onSubmit={async (event) => {
-          event.preventDefault();
-          setBusy(true);
-          setError("");
-          const ownerWindow = event.currentTarget.ownerDocument.defaultView;
-          try {
-            const response = await checked(
-              await fetch("/api/canvases", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ name }),
-              }),
-            );
-            const { id } = await response.json();
-            ownerWindow?.location.assign(`/?canvas=${id}`);
-          } catch (error) {
-            setError(message(error));
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <input
-          aria-label={locale.Gallery.NewCanvasName}
-          placeholder={locale.Gallery.NewCanvasPlaceholder}
-          value={name}
-          maxLength={60}
-          required
-          onChange={(event) => setName(event.target.value)}
-        />
-        <button className="primary" disabled={busy || !name.trim()}>
-          {locale.Gallery.CreateCanvas}
-        </button>
-      </form>
+      <nav className="gallery-tabs" aria-label={locale.Gallery.ListLabel}>
+        <h1>
+          <button
+            aria-pressed={!trash}
+            disabled={acting !== null}
+            onClick={() => changeView("canvases")}
+          >
+            {locale.Gallery.Title}
+          </button>
+        </h1>
+        <h1>
+          <button
+            aria-pressed={trash}
+            disabled={acting !== null}
+            onClick={() => changeView("trash")}
+          >
+            {locale.Gallery.Trash}
+          </button>
+        </h1>
+      </nav>
+      {!trash && (
+        <form
+          className="create"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            setBusy(true);
+            setError("");
+            const ownerWindow = event.currentTarget.ownerDocument.defaultView;
+            try {
+              const response = await checked(
+                await fetch("/api/canvases", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ name }),
+                }),
+              );
+              const { id } = await response.json();
+              ownerWindow?.location.assign(`/?canvas=${id}`);
+            } catch (error) {
+              setError(message(error));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <input
+            aria-label={locale.Gallery.NewCanvasName}
+            placeholder={locale.Gallery.NewCanvasPlaceholder}
+            value={name}
+            maxLength={60}
+            required
+            onChange={(event) => setName(event.target.value)}
+          />
+          <button className="primary" disabled={busy || !name.trim()}>
+            {locale.Gallery.CreateCanvas}
+          </button>
+        </form>
+      )}
       {error && (
         <p className="error" role="alert">
-          {error} <button onClick={load}>{locale.Common.Retry}</button>
+          {error}{" "}
+          <button onClick={() => setAttempt((value) => value + 1)}>
+            {locale.Common.Retry}
+          </button>
         </p>
       )}
       <div className="list-heading">
@@ -140,7 +220,9 @@ function Gallery() {
               ? locale.Gallery.Count(visible.total)
               : locale.Common.Loading}
           </h2>
-          <span className="muted">{locale.Gallery.SortHint}</span>
+          <span className="muted">
+            {trash ? locale.Gallery.TrashHint : locale.Gallery.SortHint}
+          </span>
         </div>
         <input
           aria-label={locale.Gallery.Search}
@@ -152,63 +234,68 @@ function Gallery() {
           }}
         />
       </div>
-      <ul className="canvas-list" aria-label={locale.Gallery.ListLabel}>
-        {visible.items.map((canvas) => (
-          <li key={canvas.id} className="canvas-entry">
-            <a className="canvas-row" href={`/?canvas=${canvas.id}`}>
-              <strong style={titleTransition(canvas.id)}>{canvas.name}</strong>
+      <ul
+        className="canvas-list"
+        aria-label={trash ? locale.Gallery.Trash : locale.Gallery.ListLabel}
+      >
+        {visible.items.map((canvas) => {
+          const content = (
+            <>
+              <strong style={trash ? undefined : titleTransition(canvas.id)}>
+                {canvas.name}
+              </strong>
               <time dateTime={canvas.updated}>
                 {new Date(canvas.updated).toLocaleString(getLanguage())}
               </time>
-            </a>
-            <button
-              className="delete-canvas"
-              aria-label={locale.Gallery.DeleteLabel(canvas.name)}
-              disabled={deleting !== null}
-              onClick={async (event) => {
-                const ownerWindow =
-                  event.currentTarget.ownerDocument.defaultView;
-                setDeleting(canvas.id);
-                setError("");
-                try {
-                  const latest = await loadCanvas(canvas.id);
-                  if (
-                    !ownerWindow?.confirm(
-                      locale.Gallery.DeleteConfirm(latest.canvas.name),
-                    )
-                  )
-                    return;
-                  const response = await fetch(canvasURL(canvas.id), {
-                    method: "DELETE",
-                    headers: {
-                      "Content-Type": "application/json",
-                      "If-Match": latest.etag,
-                    },
-                  });
-                  if (response.status === 412)
-                    throw new Error(locale.Gallery.DeleteChanged);
-                  await checked(response);
-                  setCanvases(
-                    (items) =>
-                      items?.filter((item) => item.id !== canvas.id) ?? null,
-                  );
-                } catch (error) {
-                  setError(message(error));
-                } finally {
-                  setDeleting(null);
-                }
-              }}
-            >
-              {deleting === canvas.id
-                ? locale.Gallery.Deleting
-                : locale.Gallery.Delete}
-            </button>
-          </li>
-        ))}
+            </>
+          );
+          return (
+            <li key={canvas.id} className="canvas-entry">
+              {trash ? (
+                <div className="canvas-row trash-row">{content}</div>
+              ) : (
+                <a className="canvas-row" href={`/?canvas=${canvas.id}`}>
+                  {content}
+                </a>
+              )}
+              {trash ? (
+                <button
+                  className="row-action restore-canvas"
+                  disabled={acting !== null}
+                  title={locale.Gallery.RestoreHint}
+                  aria-label={locale.Gallery.RestoreLabel(canvas.name)}
+                  onClick={() => void act(canvas)}
+                >
+                  <svg
+                    viewBox="0 0 32 32"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="m12 7-7 7 7 7M5 14h14a7 7 0 0 1 0 14h-5" />
+                  </svg>
+                </button>
+              ) : (
+                <HoldDelete
+                  name={canvas.name}
+                  disabled={acting !== null}
+                  onDelete={() => void act(canvas)}
+                />
+              )}
+            </li>
+          );
+        })}
       </ul>
       {canvases && visible.total === 0 && (
         <p className="empty">
-          {query.trim() ? locale.Gallery.NoMatches : locale.Gallery.Empty}
+          {query.trim()
+            ? locale.Gallery.NoMatches
+            : trash
+              ? locale.Gallery.TrashEmpty
+              : locale.Gallery.Empty}
         </p>
       )}
       {visible.pages > 1 && (

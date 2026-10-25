@@ -10,11 +10,14 @@ export interface Locale {
     NewCanvasName: string;
     NewCanvasPlaceholder: string;
     CreateCanvas: string;
-    Delete: string;
-    Deleting: string;
+    Trash: string;
+    TrashHint: string;
+    TrashEmpty: string;
+    DeleteHint: string;
+    RestoreHint: string;
+    RestoreLabel: (name: string) => string;
     DeleteChanged: string;
     DeleteLabel: (name: string) => string;
-    DeleteConfirm: (name: string) => string;
     SortHint: string;
     Search: string;
     ListLabel: string;

@@ -11,13 +11,16 @@ const locale: Locale = {
     NewCanvasName: "New canvas name",
     NewCanvasPlaceholder: "Name your new canvas",
     CreateCanvas: "New canvas",
-    Delete: "Delete",
-    Deleting: "Deleting…",
+    Trash: "Trash",
+    TrashHint: "Recently deleted first · Kept for 30 days",
+    TrashEmpty: "Trash is empty.",
+    DeleteHint:
+      "Hold for 2 seconds to move to trash for 30 days; release to cancel",
+    RestoreHint: "Restore to My canvases",
+    RestoreLabel: (name) => `Restore canvas “${name}”`,
     DeleteChanged:
       "The canvas just changed in another page and was not deleted. Please try again.",
     DeleteLabel: (name) => `Delete canvas “${name}”`,
-    DeleteConfirm: (name) =>
-      `Delete canvas “${name}”? It will remain in the server trash for 30 days and can be recovered by an administrator during that time.`,
     SortHint: "Recently updated first · 20 per page",
     Search: "Search canvases",
     ListLabel: "Canvas list",

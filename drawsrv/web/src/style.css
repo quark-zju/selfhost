@@ -238,8 +238,97 @@ time {
   flex: 1;
   min-width: 0;
 }
-.delete-canvas {
+.gallery-tabs {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  margin-bottom: 28px;
+}
+.gallery-tabs h1 {
+  margin: 0;
+}
+.gallery-tabs button {
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: #96949f;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+}
+.gallery-tabs button[aria-pressed="true"] {
+  color: #25243a;
+}
+.gallery-tabs button:hover {
+  color: #5948ba;
+}
+.row-action {
+  display: grid;
+  place-items: center;
   flex-shrink: 0;
-  margin-right: 12px;
-  color: #a32342;
+  width: 44px;
+  height: 44px;
+  margin-right: 10px;
+  padding: 5px;
+  border: 0;
+  background: transparent;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.row-action svg {
+  width: 32px;
+  height: 32px;
+}
+.delete-canvas {
+  color: #c53445;
+  opacity: 0;
+  pointer-events: none;
+}
+.canvas-entry:hover .delete-canvas,
+.canvas-entry:focus-within .delete-canvas,
+.delete-canvas.holding {
+  opacity: 1;
+  pointer-events: auto;
+}
+.canvas-entry .delete-canvas:disabled {
+  opacity: 0;
+}
+.canvas-entry:hover .delete-canvas:disabled,
+.canvas-entry:focus-within .delete-canvas:disabled {
+  opacity: 0.5;
+}
+.restore-canvas {
+  color: #595469;
+}
+.trash-row:hover {
+  background: transparent;
+}
+.hold-progress {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  transform: rotate(-90deg);
+  transform-origin: center;
+}
+.holding .delete-outline {
+  opacity: 0.2;
+}
+.holding .hold-progress {
+  animation: hold-confirm 2s linear forwards;
+}
+@keyframes hold-confirm {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@media (hover: none), (pointer: coarse) {
+  .canvas-entry .delete-canvas {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .canvas-entry .delete-canvas:disabled {
+    opacity: 0.5;
+  }
 }
