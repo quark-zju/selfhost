@@ -52,7 +52,7 @@ make enable                        # systemctl enable --now drawsrv.service
 make status
 ```
 
-`make deploy` 创建系统用户/组并安装文件、刷新 systemd，但不会自动启动或重启服务。配置文件已存在时保留原文件。以 root 身份安装时可设置 `SUDO=`。
+`make deploy` 创建系统用户/组并安装文件、刷新 systemd 并启用开机自启，但不会自动启动或重启服务。配置文件已存在时保留原文件。以 root 身份安装时可设置 `SUDO=`。
 
 默认安装位置：
 

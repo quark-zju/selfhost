@@ -36,6 +36,8 @@ make config
 make deploy
 ```
 
+`make install-systemd`（也由 `make deploy` 调用）默认启用 `picosrv.socket` 开机自启，但不会立即启动或重启。
+
 将会按需创建 picosrv 服务用户，按需生成 HMAC 密钥，编译安装主程序，以及安装 systemd 服务。
 
 ### 3. 准备证书
@@ -106,6 +108,8 @@ IP 地址 (libloc-database) 随时间变化。部署每日更新 systemd 计划�
 ```bash
 CC="CN US" make deploy-nft-rules
 ```
+
+`make install-nft-rules` 默认启用规则更新 timer 开机自启；`make deploy-nft-rules` 还会立即应用规则并启动 timer。
 
 国家列表保存在 `/etc/picosrv/nft-rules.env`。
 

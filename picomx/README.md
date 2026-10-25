@@ -71,7 +71,7 @@ sudo systemctl restart picomx.socket
 邮件服务器通常仍无法直接向本机投递；如果 25 端口不可用，可考虑使用外部邮件服务（例如
 purelymail）作为 relay，并让 picomx 在可用的非标准端口接收本地流量。
 
-`make deploy` 只安装程序、配置样例和 systemd unit，不会替你修改 DNS，也不会自动启动
+`make deploy` 安装程序、配置样例和 systemd unit，并启用 `picomx.socket` 开机自启，不会替你修改 DNS，也不会自动启动
 服务。下面是一套可直接套用的公网配置（假设服务器公网 IPv4 为 `203.0.113.10`，
 收信域为 `example.net`，SMTP/POP3S 主机名为 `mx.example.net`）。
 

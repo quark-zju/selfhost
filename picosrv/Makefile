@@ -56,6 +56,7 @@ install-systemd:
 	$(SUDO) install -m 644 deploy/systemd/picosrv.service $(SYSTEMD_DIR)/picosrv.service
 	$(SUDO) install -m 644 deploy/systemd/picosrv.socket $(SYSTEMD_DIR)/picosrv.socket
 	$(SUDO) systemctl daemon-reload
+	$(SUDO) systemctl enable picosrv.socket
 
 install-fail2ban:
 	@if ! command -v fail2ban-client >/dev/null 2>&1; then \
@@ -95,6 +96,7 @@ install-nft-rules:
 	$(SUDO) install -m 644 deploy/systemd/$(NFT_RULES_SERVICE) $(SYSTEMD_DIR)/$(NFT_RULES_SERVICE)
 	$(SUDO) install -m 644 deploy/systemd/$(NFT_RULES_TIMER) $(SYSTEMD_DIR)/$(NFT_RULES_TIMER)
 	$(SUDO) systemctl daemon-reload
+	$(SUDO) systemctl enable $(NFT_RULES_TIMER)
 
 setup-user:
 	if ! getent group $(SERVICE_GROUP) >/dev/null; then \

@@ -76,6 +76,7 @@ install-systemd:
 	$(SUDO) install -m 644 deploy/systemd/picomx.service $(SYSTEMD_DIR)/picomx.service
 	$(SUDO) install -m 644 deploy/systemd/picomx.socket $(SYSTEMD_DIR)/picomx.socket
 	$(SUDO) systemctl daemon-reload
+	$(SUDO) systemctl enable picomx.socket
 
 override-systemd:
 	@if [ -z "$(SMTP_PORT)" ]; then \

@@ -109,10 +109,12 @@ install-systemd:
 		deploy/drawsrv.service > "$$unit"; \
 	$(SUDO) install -d -m 755 "$(DESTDIR)$(SYSTEMD_DIR)"; \
 	$(SUDO) install -m 644 "$$unit" "$(DESTDIR)$(SYSTEMD_DIR)/drawsrv.service"; \
-	if [ -z "$(DESTDIR)" ]; then $(SUDO) $(SYSTEMCTL) daemon-reload; fi
+	if [ -z "$(DESTDIR)" ]; then \
+		$(SUDO) $(SYSTEMCTL) daemon-reload; \
+		$(SUDO) $(SYSTEMCTL) enable drawsrv.service; \
+	fi
 
-# Like the sibling projects, deployment installs files but does not enable or
-# restart the public-facing service. Review config, then explicitly enable it.
+# Deployment enables boot startup without starting or restarting the service.
 deploy: setup-user install install-config install-systemd
 
 enable:
