@@ -3,14 +3,34 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="drawsrv-canvas" content="" />
     <title>我的画布 | drawsrv</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <script>
       window.EXCALIDRAW_ASSET_PATH = "/";
+      {
+        const owner = document.currentScript.ownerDocument.defaultView;
+        owner.drawsrvInitialTransition = new Promise((resolve) => {
+          if (!("onpagereveal" in owner)) {
+            resolve();
+            return;
+          }
+          owner.addEventListener(
+            "pagereveal",
+            (event) => {
+              Promise.resolve(event.viewTransition?.finished).then(
+                resolve,
+                resolve,
+              );
+            },
+            { once: true },
+          );
+        });
+      }
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><!--drawsrv-initial--></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

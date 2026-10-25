@@ -38,6 +38,23 @@ import { paginateCanvases } from "./canvasList";
 const message = (error: unknown) =>
   error instanceof Error ? error.message : "请求失败";
 
+// Metadata is embedded in HTML; canvas contents still load through the API.
+function pendingTitle(doc: Document, id: string | null): string | null {
+  try {
+    const hint = JSON.parse(
+      doc
+        .querySelector('meta[name="drawsrv-canvas"]')
+        ?.getAttribute("content") ?? "null",
+    );
+    return hint?.id === id && typeof hint.name === "string" ? hint.name : null;
+  } catch {
+    return null;
+  }
+}
+const titleTransition = (id: string) => ({
+  viewTransitionName: `canvas-title-${id.replace(/[^a-zA-Z0-9_-]/g, "_")}`,
+});
+
 function Gallery() {
   const [canvases, setCanvases] = useState<CanvasItem[] | null>(null);
   const [name, setName] = useState("");
@@ -121,7 +138,7 @@ function Gallery() {
         {visible.items.map((canvas) => (
           <li key={canvas.id}>
             <a className="canvas-row" href={`/?canvas=${canvas.id}`}>
-              <strong>{canvas.name}</strong>
+              <strong style={titleTransition(canvas.id)}>{canvas.name}</strong>
               <time dateTime={canvas.updated}>
                 {new Date(canvas.updated).toLocaleString()}
               </time>
@@ -601,27 +618,29 @@ function Editor({
   return (
     <div className="workspace" ref={node}>
       <header className="editor-header">
-        <input
-          aria-label="画布名称"
-          value={name}
-          maxLength={60}
-          onChange={(event) => {
-            const value = event.target.value;
-            setName(value);
-            if (value.trim()) {
-              current.current = { ...current.current, name: value.trim() };
-              queue();
-            }
-          }}
-          onFocus={() => {
-            editingName.current = true;
-          }}
-          onBlur={() => {
-            editingName.current = false;
-            setName(current.current.name);
-            void save.resumeRemote();
-          }}
-        />
+        <div className="canvas-title" style={titleTransition(id)}>
+          <input
+            aria-label="画布名称"
+            value={name}
+            maxLength={60}
+            onChange={(event) => {
+              const value = event.target.value;
+              setName(value);
+              if (value.trim()) {
+                current.current = { ...current.current, name: value.trim() };
+                queue();
+              }
+            }}
+            onFocus={() => {
+              editingName.current = true;
+            }}
+            onBlur={() => {
+              editingName.current = false;
+              setName(current.current.name);
+              void save.resumeRemote();
+            }}
+          />
+        </div>
       </header>
       {conflict && (
         <div className="remote-update" role="status">
@@ -697,6 +716,7 @@ function App({ root }: { root: HTMLElement }) {
   const id = new URL(
     root.ownerDocument.defaultView!.location.href,
   ).searchParams.get("canvas");
+  const [titleHint] = useState(() => pendingTitle(root.ownerDocument, id));
   const [loaded, setLoaded] = useState<Awaited<
     ReturnType<typeof loadCanvas>
   > | null>(null);
@@ -709,7 +729,12 @@ function App({ root }: { root: HTMLElement }) {
     let active = true;
     setError("");
     void loadCanvas(id)
-      .then((value) => {
+      .then(async (value) => {
+        // Keep the captured title node mounted until the native animation ends.
+        const owner = root.ownerDocument.defaultView as Window & {
+          drawsrvInitialTransition?: Promise<void>;
+        };
+        await owner.drawsrvInitialTransition;
         if (active) {
           setLoaded(value);
         }
@@ -744,9 +769,27 @@ function App({ root }: { root: HTMLElement }) {
       ownerWindow={root.ownerDocument.defaultView!}
     />
   ) : (
-    <main className="gallery">正在加载画布…</main>
+    <div className="workspace">
+      <header className="editor-header">
+        <div
+          className="canvas-title"
+          style={titleHint ? titleTransition(id!) : undefined}
+        >
+          <input
+            aria-label="画布名称"
+            value={titleHint ?? ""}
+            placeholder="正在加载画布…"
+            readOnly
+          />
+        </div>
+      </header>
+      <div className="canvas-loading" role="status">
+        正在加载画布…
+      </div>
+    </div>
   );
 }
 
 const root = document.getElementById("root")!;
-createRoot(root).render(<App root={root} />);
+// Commit the initial title before the render-blocking entry script completes.
+flushSync(() => createRoot(root).render(<App root={root} />));

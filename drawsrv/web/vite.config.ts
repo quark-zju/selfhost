@@ -15,6 +15,19 @@ function fonts() {
 }
 fonts();
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: "render-blocking-entry",
+      transformIndexHtml: {
+        order: "post",
+        handler: (html) =>
+          html.replaceAll(
+            '<script type="module"',
+            '<script type="module" blocking="render"',
+          ),
+      },
+    },
+  ],
   server: { proxy: { "/api": "http://127.0.0.1:8080" } },
 });

@@ -204,3 +204,35 @@ time {
   color: #777589;
   font-size: 14px;
 }
+
+@view-transition {
+  navigation: auto;
+}
+/* Only titles participate; avoid taking a full drawing snapshot. */
+:root {
+  view-transition-name: none;
+}
+::view-transition-group(*) {
+  animation-duration: 280ms;
+  animation-timing-function: ease-in-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  @view-transition {
+    navigation: none;
+  }
+}
+.canvas-loading {
+  padding: 24px;
+  color: #777589;
+}
+
+.editor-header .canvas-title {
+  flex: 1;
+  min-width: 120px;
+  max-width: 320px;
+  margin-right: auto;
+}
+.editor-header .canvas-title input {
+  width: 100%;
+  margin: 0;
+}

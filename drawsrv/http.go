@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"html"
 	"io"
 	"io/fs"
 	"log"
@@ -34,6 +36,40 @@ func newHandler(s *store, static fs.FS) http.Handler {
 		}
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if r.URL.Path == "/" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			id := r.URL.Query().Get("canvas")
+			if canvasID.MatchString(id) {
+				s.mu.Lock()
+				meta, found := s.state.Canvases[id]
+				name := meta.Name
+				if draft := s.pending[id]; draft != nil {
+					name = draft.name
+				}
+				s.mu.Unlock()
+				if found {
+					body, err := fs.ReadFile(static, "index.html")
+					if err != nil {
+						http.Error(w, "cannot read frontend", 500)
+						return
+					}
+					hint, _ := json.Marshal(struct {
+						ID   string `json:"id"`
+						Name string `json:"name"`
+					}{id, name})
+					body = bytes.Replace(body, []byte(`<meta name="drawsrv-canvas" content="" />`),
+						[]byte(`<meta name="drawsrv-canvas" content="`+html.EscapeString(string(hint))+`" />`), 1)
+					body = bytes.Replace(body, []byte("<title>我的画布 | drawsrv</title>"),
+						[]byte("<title>"+html.EscapeString(name)+" | drawsrv</title>"), 1)
+					// Render the transition target before React or canvas data loads.
+					initial := `<div class="workspace"><header class="editor-header"><div class="canvas-title" style="view-transition-name:canvas-title-` + id + `"><input aria-label="画布名称" value="` + html.EscapeString(name) + `" readonly></div></header><div class="canvas-loading" role="status">正在加载画布…</div></div>`
+					body = bytes.Replace(body, []byte("<!--drawsrv-initial-->"), []byte(initial), 1)
+					w.Header().Set("ETag", revision(body))
+					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+					http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(body))
+					return
+				}
+			}
+		}
 		if immutableAsset.MatchString(r.URL.Path) {
 			if info, err := fs.Stat(static, strings.TrimPrefix(r.URL.Path, "/")); err == nil && !info.IsDir() {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
