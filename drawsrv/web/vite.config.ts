@@ -2,6 +2,10 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import {
+  stripFirebaseConfig,
+  assertNoFirebaseConfig,
+} from "./build/excalidrawMetadata.ts";
 
 const packageRoot = resolve("node_modules/@excalidraw/excalidraw");
 const { version } = JSON.parse(
@@ -13,6 +17,21 @@ const keptLanguages = new Set(["en", "zh-CN"]);
 export default defineConfig({
   plugins: [
     react(),
+    {
+      name: "excalidraw-without-firebase-config",
+      enforce: "pre",
+      transform(code, id) {
+        if (!id.startsWith(packageRoot + "/") || !id.endsWith(".js")) return;
+        return stripFirebaseConfig(code);
+      },
+      generateBundle(_options, bundle) {
+        for (const output of Object.values(bundle)) {
+          if (output.type === "chunk") {
+            assertNoFirebaseConfig(output.code, output.fileName);
+          }
+        }
+      },
+    },
     {
       name: "excalidraw-public-fonts",
       enforce: "pre",
