@@ -35,10 +35,15 @@ type canvasMetadata struct {
 	Updated time.Time `json:"updated"`
 	Blob    string    `json:"blob"`
 }
+type trashMetadata struct {
+	canvasMetadata
+	DeletedAt time.Time `json:"deletedAt"`
+}
+
 type storeState struct {
 	Version  int                       `json:"version"`
 	Canvases map[string]canvasMetadata `json:"canvases"`
-	Trash    map[string]canvasMetadata `json:"trash,omitempty"`
+	Trash    map[string]trashMetadata  `json:"trash,omitempty"`
 }
 type store struct {
 	mu                  sync.Mutex
@@ -280,10 +285,10 @@ func (s *store) loadState() error {
 		expected[id+".json"] = meta.Blob
 	}
 	for name, meta := range state.Trash {
-		if _, err := trashDeletedAt(name); err != nil || !commitID.MatchString(meta.Blob) || strings.TrimSpace(meta.Name) == "" || len(meta.Name) > 200 || meta.Updated.IsZero() {
+		if !canvasID.MatchString(name) || meta.DeletedAt.IsZero() || !commitID.MatchString(meta.Blob) || strings.TrimSpace(meta.Name) == "" || len(meta.Name) > 200 || meta.Updated.IsZero() {
 			return errors.New("invalid committed trash metadata")
 		}
-		expected["trash/"+name] = meta.Blob
+		expected["trash/"+name+".json"] = meta.Blob
 	}
 	count := 0
 	for _, entry := range bytes.Split(tree, []byte{0}) {
@@ -451,7 +456,7 @@ func (s *store) publish(next storeState, message string) error {
 		sort.Strings(names)
 		var trashTree bytes.Buffer
 		for _, name := range names {
-			fmt.Fprintf(&trashTree, "100644 blob %s\t%s\x00", next.Trash[name].Blob, name)
+			fmt.Fprintf(&trashTree, "100644 blob %s\t%s.json\x00", next.Trash[name].Blob, name)
 		}
 		out, err := s.gitInput(&trashTree, "mktree", "-z")
 		if err != nil {

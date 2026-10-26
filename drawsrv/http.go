@@ -93,7 +93,7 @@ func (s *store) serve(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		if _, err := trashDeletedAt(parts[1]); err != nil {
+		if !canvasID.MatchString(parts[1]) {
 			http.NotFound(w, r)
 			return
 		}

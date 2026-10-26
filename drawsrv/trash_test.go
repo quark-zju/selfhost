@@ -54,12 +54,12 @@ func TestDeleteRetainsLatestDraftAndExpiresWithoutRewritingHistory(t *testing.T)
 	for key := range s.state.Trash {
 		name = key
 	}
-	deleted, err := trashDeletedAt(name)
-	if err != nil {
-		t.Fatal(err)
+	deleted := s.state.Trash[name].DeletedAt
+	if name != id || deleted.IsZero() {
+		t.Fatal("trash must use canvas ID and indexed deletion time")
 	}
 	deletionCommit := s.head
-	archived, err := s.git("show", deletionCommit+":trash/"+name)
+	archived, err := s.git("show", deletionCommit+":trash/"+name+".json")
 	if err != nil || string(archived) != draft {
 		t.Fatalf("latest draft not archived: %s %v", archived, err)
 	}
@@ -85,10 +85,10 @@ func TestDeleteRetainsLatestDraftAndExpiresWithoutRewritingHistory(t *testing.T)
 	if len(restarted.state.Trash) != 0 {
 		t.Fatal("trash not expired")
 	}
-	if _, err := restarted.git("show", "HEAD:trash/"+name); err == nil {
+	if _, err := restarted.git("show", "HEAD:trash/"+name+".json"); err == nil {
 		t.Fatal("expired entry still in HEAD")
 	}
-	if body, err := restarted.git("show", deletionCommit+":trash/"+name); err != nil || string(body) != draft {
+	if body, err := restarted.git("show", deletionCommit+":trash/"+name+".json"); err != nil || string(body) != draft {
 		t.Fatal("history changed", err)
 	}
 	if w := request(restarted, "GET", "/api/canvases/"+other, "", ""); w.Code != 200 {
@@ -247,7 +247,7 @@ func TestFailedTrashRestorePreservesArchive(t *testing.T) {
 	}
 	path := "/api/trash/" + name + "/restore"
 	meta := s.state.Trash[name]
-	s.state.Canvases[id] = meta
+	s.state.Canvases[id] = meta.canvasMetadata
 	if w := request(s, "POST", path, "{}", ""); w.Code != 409 {
 		t.Fatal("restore would overwrite active canvas")
 	}
@@ -263,5 +263,41 @@ func TestFailedTrashRestorePreservesArchive(t *testing.T) {
 	}
 	if s.head != before || len(s.state.Canvases) != 0 || len(s.state.Trash) != 1 {
 		t.Fatal("failed restore lost archive")
+	}
+}
+
+func TestDeletingRestoredCanvasResetsIndexedRetention(t *testing.T) {
+	s := testStore(t)
+	id, original, _ := createCanvas(t, s)
+	first := time.Now().UTC()
+	if err := s.trashCanvas(id, []byte(original), first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.restoreTrash(id, first.Add(20*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	second := first.Add(21 * 24 * time.Hour)
+	if err := s.trashCanvas(id, []byte(original), second); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.state.Trash) != 1 || !s.state.Trash[id].DeletedAt.Equal(second) {
+		t.Fatal("second deletion did not replace indexed deletion time")
+	}
+	indexed, err := s.git("show", "HEAD:state.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state storeState
+	if err := json.Unmarshal(indexed, &state); err != nil || !state.Trash[id].DeletedAt.Equal(second) {
+		t.Fatal("deletion time not persisted in state.json", err)
+	}
+	if body, err := s.git("show", "HEAD:trash/"+id+".json"); err != nil || string(body) != original {
+		t.Fatal("trash path must stay stable", err)
+	}
+	if err := s.cleanTrash(first.Add(trashRetention)); err != nil || len(s.state.Trash) != 1 {
+		t.Fatal("cleanup used the first deletion time", err)
+	}
+	if err := s.cleanTrash(second.Add(trashRetention)); err != nil || len(s.state.Trash) != 0 {
+		t.Fatal("cleanup ignored the current deletion time", err)
 	}
 }

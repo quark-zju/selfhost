@@ -22,8 +22,8 @@ func (s *store) serveTrashLocked(w http.ResponseWriter, r *http.Request, name st
 		}
 		items := make([]item, 0, len(s.state.Trash))
 		for name, meta := range s.state.Trash {
-			deleted, err := trashDeletedAt(name)
-			if err != nil || !now.Before(deleted.Add(trashRetention)) {
+			deleted := meta.DeletedAt
+			if !now.Before(deleted.Add(trashRetention)) {
 				continue
 			}
 			items = append(items, item{name, meta.Name, deleted, deleted, deleted.Add(trashRetention)})

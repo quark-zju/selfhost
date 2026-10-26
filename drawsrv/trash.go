@@ -3,25 +3,15 @@ package main
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 )
 
 const trashRetention = 30 * 24 * time.Hour
-const trashTimeFormat = "20060102T150405.000000000Z"
-
-func trashDeletedAt(name string) (time.Time, error) {
-	stamp, id, ok := strings.Cut(name, "_")
-	if !ok || !strings.HasSuffix(id, ".json") || !canvasID.MatchString(strings.TrimSuffix(id, ".json")) {
-		return time.Time{}, errors.New("invalid trash filename")
-	}
-	return time.Parse(trashTimeFormat, stamp)
-}
 
 // Clone both manifests before publication; a failed write must leave all live
 // metadata and acknowledged pending content intact. Caller holds store.mu.
 func (s *store) copyState() storeState {
-	next := storeState{Version: s.state.Version, Canvases: make(map[string]canvasMetadata, len(s.state.Canvases)), Trash: make(map[string]canvasMetadata, len(s.state.Trash))}
+	next := storeState{Version: s.state.Version, Canvases: make(map[string]canvasMetadata, len(s.state.Canvases)), Trash: make(map[string]trashMetadata, len(s.state.Trash))}
 	for id, meta := range s.state.Canvases {
 		next.Canvases[id] = meta
 	}
@@ -46,7 +36,7 @@ func (s *store) trashCanvas(id string, body []byte, now time.Time) error {
 	}
 	next := s.copyState()
 	delete(next.Canvases, id)
-	next.Trash[now.UTC().Format(trashTimeFormat)+"_"+id+".json"] = meta
+	next.Trash[id] = trashMetadata{canvasMetadata: meta, DeletedAt: now.UTC()}
 	if err := s.publish(next, "canvas: trash "+id); err != nil {
 		return err
 	}
@@ -57,14 +47,11 @@ func (s *store) trashCanvas(id string, body []byte, now time.Time) error {
 
 // Restore the original ID on the same linear history, without overwriting an
 // active canvas. Expired entries cannot be revived between cleanup checks.
-func (s *store) restoreTrash(name string, now time.Time) (string, error) {
-	meta, ok := s.state.Trash[name]
-	deleted, err := trashDeletedAt(name)
-	if !ok || err != nil || !now.Before(deleted.Add(trashRetention)) {
+func (s *store) restoreTrash(id string, now time.Time) (string, error) {
+	meta, ok := s.state.Trash[id]
+	if !ok || !now.Before(meta.DeletedAt.Add(trashRetention)) {
 		return "", errCanvasNotFound
 	}
-	_, tail, _ := strings.Cut(name, "_")
-	id := strings.TrimSuffix(tail, ".json")
 	if _, exists := s.state.Canvases[id]; exists {
 		return "", errCanvasExists
 	}
@@ -73,9 +60,9 @@ func (s *store) restoreTrash(name string, now time.Time) (string, error) {
 		return "", err
 	}
 	next := s.copyState()
-	delete(next.Trash, name)
+	delete(next.Trash, id)
 	meta.Updated = now.UTC()
-	next.Canvases[id] = meta
+	next.Canvases[id] = meta.canvasMetadata
 	if err := s.publish(next, "canvas: restore from trash "+id); err != nil {
 		return "", err
 	}
@@ -94,12 +81,8 @@ func (s *store) cleanTrash(now time.Time) error {
 		return nil
 	}
 	var next *storeState
-	for name := range s.state.Trash {
-		deleted, err := trashDeletedAt(name)
-		if err != nil {
-			return err
-		}
-		if now.Before(deleted.Add(trashRetention)) {
+	for name, meta := range s.state.Trash {
+		if now.Before(meta.DeletedAt.Add(trashRetention)) {
 			continue
 		}
 		if next == nil {
