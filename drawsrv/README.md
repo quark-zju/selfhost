@@ -34,7 +34,7 @@ make build
 ./bin/drawsrv -static ./web/dist -data ./data
 ```
 
-打开 <http://127.0.0.1:8080>。首次运行会创建数据目录；画布和历史都保存在其中。
+打开 <http://127.0.0.1:8224>。首次运行会创建数据目录；画布和历史都保存在其中。
 
 ### 部署到 VPS
 
@@ -49,7 +49,7 @@ make enable
 
 `make build` 只编译 Go，复用仓库中的静态网页。`make deploy` 安装程序、网页和 systemd 服务；`make enable` 启动服务。
 
-使用独立域名，将整个站点反代到 `127.0.0.1:8080`，由反代提供 HTTPS 和身份认证。反代需支持 SSE 流式响应，且不要缓存 `/api/`。所有获准访问的人共享这些画布。
+使用独立域名，将整个站点反代到 `127.0.0.1:8224`，由反代提供 HTTPS 和身份认证。反代需支持 SSE 流式响应，且不要缓存 `/api/`。所有获准访问的人共享这些画布。
 
 配置文件位于 `/etc/drawsrv/drawsrv.env`，数据默认保存在 `/var/lib/drawsrv/`。可参考[配置示例](deploy/drawsrv.env.example)调整监听地址、保存间隔和内存预算。修改配置后执行 `make restart`，用 `make status` 查看运行状态。
 

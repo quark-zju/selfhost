@@ -24,7 +24,7 @@ func main() {
 }
 
 func run() (result error) {
-	addr := flag.String("listen", "127.0.0.1:8080", "HTTP listen address")
+	addr := flag.String("listen", "127.0.0.1:8224", "HTTP listen address")
 	static := flag.String("static", "web/dist", "built frontend directory")
 	data := flag.String("data", "data", "private Git data directory, outside static directory")
 	limit := flag.Int64("max-canvas-mib", 16, "maximum canvas size including base64 images")
