@@ -55,8 +55,7 @@ check-artifacts: check-web
 	@test -x $(BUILD_OUTPUT) || \
 		{ echo 'Missing Go binary: run make build'; exit 1; }
 
-# Deliberately does not depend on build: a small VPS installs existing artifacts.
-install: check-git check-artifacts
+install: build-go check-git check-artifacts
 	$(SUDO) install -d -m 755 "$(DESTDIR)$(PREFIX)" "$(DESTDIR)$(SHARE_DIR)" "$(DESTDIR)$(WEB_DIR)"
 	@set -eu; \
 	for asset in $(WEB_BUILD)/*; do \
